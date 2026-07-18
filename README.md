@@ -8,7 +8,8 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 
 ## Fitur
 
-- Login memakai NIP; password awal sama dengan NIP dan wajib diganti pada login pertama.
+- Pegawai login memakai NIP; password awal sama dengan NIP dan wajib diganti pada login pertama.
+- Administrator merupakan akun sistem terpisah, login memakai username dan password awal dari environment Render, serta tidak tercatat sebagai pegawai.
 - Profil untuk mengubah password serta memverifikasi email dan nomor HP pemulihan.
 - Dashboard otomatis mengikuti periode terbaru yang dipublikasikan admin.
 - Potongan berjalan, detail per tanggal, grafik riwayat default 12 bulan, dan filter rentang bulan/tahun.
@@ -41,19 +42,21 @@ Contoh yang diminta juga terpetakan: Heru Prayitno sebagai Kepala Bagian Umum da
 1. Buat project Supabase baru.
 2. Di **SQL Editor**, jalankan berurutan:
    - `supabase/migrations/001_pantas_schema.sql`
+   - `supabase/migrations/002_separate_admin_accounts.sql`
    - `supabase/seed/002_employees_from_reference.sql`
 3. Salin connection string **Session pooler port 5432** dan tambahkan `sslmode=require` bila belum ada.
 4. Buat repository GitHub **private**, lalu unggah seluruh isi folder ini ke root repository.
 5. Di Render pilih **New → Blueprint**, hubungkan repository, dan gunakan `render.yaml`.
 6. Isi seluruh secret yang ditandai `sync: false`; petunjuk lengkap ada di [docs/RENDER.md](docs/RENDER.md).
 7. Setelah URL Render tersedia, set `APP_URL` ke URL HTTPS tersebut lalu redeploy.
-8. Login dengan NIP admin bootstrap dan password awal yang sama dengan NIP, lalu segera ganti password.
+8. Login dengan `BOOTSTRAP_ADMIN_USERNAME` dan `BOOTSTRAP_ADMIN_PASSWORD`, lalu segera ganti password awal.
 9. Buka **Import Data**, unggah workbook bulanan, periksa preview, lalu klik **Publikasikan**.
 
 Petunjuk terperinci:
 
 - [Konfigurasi Supabase](docs/SUPABASE.md)
 - [Konfigurasi Render](docs/RENDER.md)
+- [Upgrade administrator non-pegawai](docs/UPGRADE_ADMIN.md)
 - [Format workbook import](docs/EXCEL_FORMAT.md)
 - [Arsitektur dan matriks akses](docs/ARCHITECTURE.md)
 - [Keamanan dan operasi](docs/SECURITY.md)

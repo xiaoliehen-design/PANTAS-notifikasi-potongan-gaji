@@ -9,13 +9,18 @@ import (
 
 func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	var input struct {
-		NIP      string `json:"nip"`
-		Password string `json:"password"`
+		Identifier string `json:"identifier"`
+		NIP        string `json:"nip"`
+		Password   string `json:"password"`
 	}
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	result, err := a.auth.Login(request.Context(), input.NIP, input.Password, auth.ClientIP(request, a.cfg.TrustProxy), request.UserAgent())
+	identifier := input.Identifier
+	if identifier == "" {
+		identifier = input.NIP
+	}
+	result, err := a.auth.Login(request.Context(), identifier, input.Password, auth.ClientIP(request, a.cfg.TrustProxy), request.UserAgent())
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidCredentials):

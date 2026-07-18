@@ -9,9 +9,10 @@ Pilih region yang dekat dengan service Render (contoh: Singapore), buat password
 Di **SQL Editor**, jalankan file berikut secara berurutan dan tunggu sampai masing-masing selesai:
 
 1. `supabase/migrations/001_pantas_schema.sql`
-2. `supabase/seed/002_employees_from_reference.sql`
+2. `supabase/migrations/002_separate_admin_accounts.sql`
+3. `supabase/seed/002_employees_from_reference.sql`
 
-Migration membuat extension `pgcrypto`, tabel, index, trigger, view, parameter peringatan, kategori alasan, aturan potongan, RLS, dan bucket privat `pantas-appeals`. Seed berikutnya membuat struktur organisasi dan 1.123 akun.
+Migration pertama membuat skema utama. Migration kedua membuat identitas akun dan tabel administrator yang terpisah dari pegawai, serta memigrasikan referensi audit lama. Seed berikutnya membuat struktur organisasi dan 1.123 akun pegawai.
 
 Seed mengandung data pribadi. Jangan menaruhnya di repository publik.
 
@@ -23,10 +24,11 @@ Jalankan di SQL Editor:
 select unit_type, count(*) from public.units group by unit_type order by unit_type;
 select position_role, count(*) from public.users group by position_role order by position_role;
 select name, nip, position_role from public.users where position_role = 'office_head';
+select username, name, is_active from public.admin_accounts;
 select id, name, public from storage.buckets where id = 'pantas-appeals';
 ```
 
-Hasil utama yang diharapkan: 59 unit, 1.123 pengguna, satu `office_head` bernama Adhang Noegroho Adhi, dan bucket `public=false`.
+Hasil utama yang diharapkan sebelum aplikasi pertama kali dijalankan: 59 unit, 1.123 pengguna, satu `office_head` bernama Adhang Noegroho Adhi, dan bucket `public=false`. Baris `admin_accounts` dibuat oleh aplikasi saat startup setelah environment bootstrap admin diisi.
 
 ## 4. Connection string
 

@@ -365,6 +365,10 @@ func (a *App) uploadAppealDocument(response http.ResponseWriter, request *http.R
 }
 
 func (a *App) supervisorQueue(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	if principal.IsAdmin {
+		writeError(response, http.StatusForbidden, "Administrator hanya memberikan keputusan final banding.", "forbidden")
+		return
+	}
 	items, err := a.reviewQueue(request, principal, false)
 	if err != nil {
 		a.internalError(response, "supervisor queue", err)
@@ -425,6 +429,10 @@ func (a *App) reviewQueue(request *http.Request, principal auth.Principal, admin
 }
 
 func (a *App) supervisorDecision(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	if principal.IsAdmin {
+		writeError(response, http.StatusForbidden, "Administrator hanya memberikan keputusan final banding.", "forbidden")
+		return
+	}
 	itemID := request.PathValue("id")
 	var input struct {
 		Decision string `json:"decision"`
@@ -479,8 +487,8 @@ func (a *App) supervisorDecision(response http.ResponseWriter, request *http.Req
 		}
 		if _, err := tx.Exec(request.Context(), `
 			insert into public.notifications (user_id, kind, title, body, action_url)
-			select id, 'appeal_admin_queue', 'Banding menunggu keputusan admin', 'Verifikasi atasan telah selesai.', '/#admin-reviews'
-			from public.users where is_admin and is_active and deleted_at is null`); err != nil {
+			select account_id, 'appeal_admin_queue', 'Banding menunggu keputusan admin', 'Verifikasi atasan telah selesai.', '/#admin-reviews'
+			from public.admin_accounts where is_active`); err != nil {
 			a.internalError(response, "admin notify", err)
 			return
 		}

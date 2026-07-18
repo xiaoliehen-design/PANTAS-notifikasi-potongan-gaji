@@ -22,7 +22,7 @@ func (a *App) adminUsers(response http.ResponseWriter, request *http.Request, _ 
 	limit := min(parsePositiveInt(request.URL.Query().Get("limit"), 50), 100)
 	offset := (page - 1) * limit
 	rows, err := a.pool.Query(request.Context(), `
-		select u.id::text, u.nip, u.name, u.position_role, u.is_admin, u.is_active,
+		select u.id::text, u.nip, u.name, u.position_role, u.is_active,
 		       u.must_change_password, coalesce(u.email, ''), u.email_verified_at is not null,
 		       coalesce(u.phone_e164, ''), u.phone_verified_at is not null,
 		       un.id::text, un.name, un.unit_type, count(*) over()
@@ -39,23 +39,22 @@ func (a *App) adminUsers(response http.ResponseWriter, request *http.Request, _ 
 	total := 0
 	for rows.Next() {
 		var id, nip, name, role, email, phone, unitID, unitName, unitType string
-		var isAdmin, active, mustChange, emailVerified, phoneVerified bool
-		if err := rows.Scan(&id, &nip, &name, &role, &isAdmin, &active, &mustChange, &email, &emailVerified, &phone, &phoneVerified, &unitID, &unitName, &unitType, &total); err != nil {
+		var active, mustChange, emailVerified, phoneVerified bool
+		if err := rows.Scan(&id, &nip, &name, &role, &active, &mustChange, &email, &emailVerified, &phone, &phoneVerified, &unitID, &unitName, &unitType, &total); err != nil {
 			a.internalError(response, "admin user scan", err)
 			return
 		}
-		items = append(items, map[string]any{"id": id, "nip": nip, "name": name, "role": role, "is_admin": isAdmin, "is_active": active, "must_change_password": mustChange, "email": email, "email_verified": emailVerified, "phone": phone, "phone_verified": phoneVerified, "unit_id": unitID, "unit_name": unitName, "unit_type": unitType})
+		items = append(items, map[string]any{"id": id, "nip": nip, "name": name, "role": role, "is_active": active, "must_change_password": mustChange, "email": email, "email_verified": emailVerified, "phone": phone, "phone_verified": phoneVerified, "unit_id": unitID, "unit_name": unitName, "unit_type": unitType})
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"items": items, "page": page, "limit": limit, "total": total})
 }
 
 func (a *App) adminCreateUser(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
 	var input struct {
-		NIP     string `json:"nip"`
-		Name    string `json:"name"`
-		UnitID  string `json:"unit_id"`
-		Role    string `json:"role"`
-		IsAdmin bool   `json:"is_admin"`
+		NIP    string `json:"nip"`
+		Name   string `json:"name"`
+		UnitID string `json:"unit_id"`
+		Role   string `json:"role"`
 	}
 	if !decodeJSON(response, request, &input) {
 		return
@@ -71,8 +70,8 @@ func (a *App) adminCreateUser(response http.ResponseWriter, request *http.Reques
 	}
 	var id string
 	err := a.pool.QueryRow(request.Context(), `
-		insert into public.users (nip, name, unit_id, position_role, is_admin, password_hash, must_change_password)
-		values ($1, $2, $3, $4, $5, null, true) returning id::text`, input.NIP, input.Name, input.UnitID, input.Role, input.IsAdmin).Scan(&id)
+		insert into public.users (nip, name, unit_id, position_role, password_hash, must_change_password)
+		values ($1, $2, $3, $4, null, true) returning id::text`, input.NIP, input.Name, input.UnitID, input.Role).Scan(&id)
 	if err != nil {
 		if isConstraintError(err) {
 			writeError(response, http.StatusConflict, "NIP atau posisi kepala unit sudah digunakan.", "user_conflict")
@@ -95,7 +94,6 @@ func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Reques
 		Name     *string `json:"name"`
 		UnitID   *string `json:"unit_id"`
 		Role     *string `json:"role"`
-		IsAdmin  *bool   `json:"is_admin"`
 		IsActive *bool   `json:"is_active"`
 		Reason   string  `json:"reason"`
 	}
@@ -109,8 +107,8 @@ func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Reques
 	}
 	defer tx.Rollback(request.Context())
 	var oldName, oldUnit, oldRole string
-	var oldAdmin, oldActive bool
-	err = tx.QueryRow(request.Context(), `select name, unit_id::text, position_role, is_admin, is_active from public.users where id = $1 and deleted_at is null for update`, userID).Scan(&oldName, &oldUnit, &oldRole, &oldAdmin, &oldActive)
+	var oldActive bool
+	err = tx.QueryRow(request.Context(), `select name, unit_id::text, position_role, is_active from public.users where id = $1 and deleted_at is null for update`, userID).Scan(&oldName, &oldUnit, &oldRole, &oldActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(response, http.StatusNotFound, "Pengguna tidak ditemukan.", "not_found")
 		return
@@ -119,7 +117,7 @@ func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Reques
 		a.internalError(response, "admin user lookup", err)
 		return
 	}
-	name, unitID, role, isAdmin, active := oldName, oldUnit, oldRole, oldAdmin, oldActive
+	name, unitID, role, active := oldName, oldUnit, oldRole, oldActive
 	if input.Name != nil {
 		name = strings.TrimSpace(*input.Name)
 	}
@@ -129,9 +127,6 @@ func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Reques
 	if input.Role != nil {
 		role = *input.Role
 	}
-	if input.IsAdmin != nil {
-		isAdmin = *input.IsAdmin
-	}
 	if input.IsActive != nil {
 		active = *input.IsActive
 	}
@@ -139,24 +134,13 @@ func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Reques
 		writeError(response, http.StatusUnprocessableEntity, "Data pengguna tidak valid.", "invalid_user")
 		return
 	}
-	if userID == actor.ID && (!isAdmin || !active) {
-		writeError(response, http.StatusConflict, "Administrator tidak dapat menonaktifkan atau mencabut akses admin dirinya sendiri.", "self_lockout")
-		return
-	}
 	if err := a.validateRoleUnitTx(request, tx, role, unitID); err != nil {
 		writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_role_unit")
 		return
 	}
-	if oldAdmin && !isAdmin {
-		var otherAdmins int
-		if err := tx.QueryRow(request.Context(), `select count(*) from public.users where is_admin and is_active and deleted_at is null and id <> $1`, userID).Scan(&otherAdmins); err != nil || otherAdmins == 0 {
-			writeError(response, http.StatusConflict, "Minimal satu administrator aktif harus dipertahankan.", "last_admin")
-			return
-		}
-	}
 	_, err = tx.Exec(request.Context(), `
-		update public.users set name = $2, unit_id = $3, position_role = $4, is_admin = $5, is_active = $6
-		where id = $1`, userID, name, unitID, role, isAdmin, active)
+		update public.users set name = $2, unit_id = $3, position_role = $4, is_admin = false, is_active = $5
+		where id = $1`, userID, name, unitID, role, active)
 	if err != nil {
 		if isConstraintError(err) {
 			writeError(response, http.StatusConflict, "Posisi kepala pada unit tersebut sudah terisi.", "user_conflict")
@@ -183,7 +167,7 @@ func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Reques
 		a.internalError(response, "admin user commit", err)
 		return
 	}
-	a.audit(request, actor.ID, "user.update", "user", userID, map[string]any{"unit_before": oldUnit, "unit_after": unitID, "role_before": oldRole, "role_after": role, "active": active, "is_admin": isAdmin})
+	a.audit(request, actor.ID, "user.update", "user", userID, map[string]any{"unit_before": oldUnit, "unit_after": unitID, "role_before": oldRole, "role_after": role, "active": active})
 	writeJSON(response, http.StatusOK, map[string]any{"message": "Data pengguna diperbarui."})
 }
 
@@ -193,19 +177,14 @@ func (a *App) adminDeleteUser(response http.ResponseWriter, request *http.Reques
 		writeError(response, http.StatusBadRequest, "Pengguna tidak valid.", "invalid_id")
 		return
 	}
-	if userID == actor.ID {
-		writeError(response, http.StatusConflict, "Administrator tidak dapat menghapus dirinya sendiri.", "self_delete")
-		return
-	}
 	tx, err := a.pool.BeginTx(request.Context(), pgx.TxOptions{})
 	if err != nil {
 		a.internalError(response, "delete user begin", err)
 		return
 	}
 	defer tx.Rollback(request.Context())
-	var isAdmin bool
 	var nip string
-	err = tx.QueryRow(request.Context(), `select is_admin, nip from public.users where id = $1 and deleted_at is null for update`, userID).Scan(&isAdmin, &nip)
+	err = tx.QueryRow(request.Context(), `select nip from public.users where id = $1 and deleted_at is null for update`, userID).Scan(&nip)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(response, http.StatusNotFound, "Pengguna tidak ditemukan.", "not_found")
 		return
@@ -213,13 +192,6 @@ func (a *App) adminDeleteUser(response http.ResponseWriter, request *http.Reques
 	if err != nil {
 		a.internalError(response, "delete user lookup", err)
 		return
-	}
-	if isAdmin {
-		var others int
-		if err := tx.QueryRow(request.Context(), `select count(*) from public.users where is_admin and is_active and deleted_at is null and id <> $1`, userID).Scan(&others); err != nil || others == 0 {
-			writeError(response, http.StatusConflict, "Minimal satu administrator aktif harus dipertahankan.", "last_admin")
-			return
-		}
 	}
 	if _, err := tx.Exec(request.Context(), `update public.users set is_active = false, deleted_at = now(), email = null, phone_e164 = null where id = $1`, userID); err != nil {
 		a.internalError(response, "delete user", err)
@@ -472,10 +444,12 @@ func (a *App) adminImports(response http.ResponseWriter, request *http.Request, 
 	rows, err := a.pool.Query(request.Context(), `
 		select ib.id::text, rp.label, rp.period_start, rp.period_end, ib.version, ib.original_filename,
 		       ib.integrity_status, ib.status, ib.row_count, ib.employee_count, ib.deduction_day_count,
-		       ib.total_deduction_rate, ib.created_at, ib.published_at, creator.name
+		       ib.total_deduction_rate, ib.created_at, ib.published_at,
+		       coalesce(creator_user.name, creator_admin.name, 'Akun tidak tersedia')
 		from public.import_batches ib
 		join public.reporting_periods rp on rp.id = ib.period_id
-		join public.users creator on creator.id = ib.created_by
+		left join public.users creator_user on creator_user.id = ib.created_by
+		left join public.admin_accounts creator_admin on creator_admin.account_id = ib.created_by
 		order by ib.created_at desc limit 100`)
 	if err != nil {
 		a.internalError(response, "admin imports", err)

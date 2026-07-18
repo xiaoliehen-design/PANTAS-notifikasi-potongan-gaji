@@ -5,6 +5,7 @@ PANTAS menangani NIP, presensi, potongan tukin, alasan banding, dan dokumen pend
 ## Kontrol yang diterapkan
 
 - Tidak ada pendaftaran publik; akun hanya dibuat admin.
+- Administrator menggunakan akun sistem terpisah dan tidak tersimpan sebagai pegawai/NIP.
 - Password awal NIP hanya berlaku sampai pengguna dipaksa menggantinya.
 - Password setelah perubahan di-hash dengan bcrypt melalui `pgcrypto` cost 12.
 - Sesi memakai token acak 256-bit yang hanya disimpan sebagai hash di database.
@@ -25,6 +26,8 @@ PANTAS menangani NIP, presensi, potongan tukin, alasan banding, dan dokumen pend
 Penggunaan NIP sebagai password awal mengikuti kebutuhan yang diberikan, tetapi NIP bukan secret. Mitigasi yang sudah diterapkan adalah wajib ganti password sebelum endpoint lain dapat digunakan, rate limit login, dan kemampuan admin mencabut sesi/reset akun.
 
 Untuk go-live, berikan akses secara bertahap dan minta pegawai melakukan login pertama dalam jangka waktu terbatas. Bila kebijakan memungkinkan di masa depan, ganti password awal NIP dengan token aktivasi acak satu kali.
+
+Password awal administrator tidak menggunakan NIP. Nilainya berasal dari secret environment Render, wajib kuat, dan hanya dipakai untuk bootstrap akun pertama. Setelah diganti melalui aplikasi, startup berikutnya tidak akan mengembalikan password ke nilai environment.
 
 ## Checklist go-live
 

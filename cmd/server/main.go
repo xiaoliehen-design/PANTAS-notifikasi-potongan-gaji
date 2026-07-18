@@ -36,7 +36,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	if err := database.BootstrapAdmin(rootCtx, pool, cfg.BootstrapAdminNIP, cfg.BootstrapAdminName); err != nil {
+	if err := database.BootstrapAdmin(rootCtx, pool, cfg.BootstrapAdminUsername, cfg.BootstrapAdminName, cfg.BootstrapAdminPassword); err != nil {
 		logger.Error("bootstrap admin failed; pastikan migration sudah dijalankan", "error", err)
 		os.Exit(1)
 	}

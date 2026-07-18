@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("NIP atau password salah")
+	ErrInvalidCredentials = errors.New("NIP/username atau password salah")
 	ErrRateLimited        = errors.New("terlalu banyak percobaan; coba kembali beberapa menit lagi")
 	ErrUnauthenticated    = errors.New("sesi tidak valid atau telah berakhir")
 	ErrInvalidCSRF        = errors.New("token keamanan tidak valid")
@@ -40,7 +40,9 @@ const (
 
 type Principal struct {
 	ID                 string `json:"id"`
+	AccountType        string `json:"account_type"`
 	NIP                string `json:"nip"`
+	Username           string `json:"username,omitempty"`
 	Name               string `json:"name"`
 	UnitID             string `json:"unit_id"`
 	UnitName           string `json:"unit_name"`
@@ -56,6 +58,13 @@ type Principal struct {
 
 func (p Principal) IsSupervisor() bool {
 	return p.IsAdmin || p.PositionRole == "section_head" || p.PositionRole == "division_head" || p.PositionRole == "office_head"
+}
+
+func (p Principal) LoginIdentifier() string {
+	if p.AccountType == "admin" {
+		return p.Username
+	}
+	return p.NIP
 }
 
 type Session struct {
@@ -91,13 +100,13 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	return principal, ok
 }
 
-func (s *Service) Login(ctx context.Context, nip, password, ip, userAgent string) (LoginResult, error) {
-	nip = strings.TrimSpace(nip)
-	if !validNIP(nip) || password == "" {
-		s.recordLoginAttempt(ctx, nip, ip, false)
+func (s *Service) Login(ctx context.Context, identifier, password, ip, userAgent string) (LoginResult, error) {
+	identifier = strings.ToLower(strings.TrimSpace(identifier))
+	if !validLoginIdentifier(identifier) || password == "" {
+		s.recordLoginAttempt(ctx, identifier, ip, false)
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	limited, err := s.loginRateLimited(ctx, nip, ip)
+	limited, err := s.loginRateLimited(ctx, identifier, ip)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -109,20 +118,28 @@ func (s *Service) Login(ctx context.Context, nip, password, ip, userAgent string
 	var passwordHash *string
 	var emailVerifiedAt, phoneVerifiedAt *time.Time
 	err = s.pool.QueryRow(ctx, `
-		select u.id::text, u.nip, u.name, u.unit_id::text, un.name, un.unit_type,
-		       u.position_role, u.is_admin, u.must_change_password,
+		select u.id::text, 'user', u.nip, '', u.name, u.unit_id::text, un.name, un.unit_type,
+		       u.position_role, false, u.must_change_password,
 		       coalesce(u.email, ''), u.email_verified_at,
 		       coalesce(u.phone_e164, ''), u.phone_verified_at, u.password_hash
 		from public.users u
 		join public.units un on un.id = u.unit_id
-		where u.nip = $1 and u.is_active and u.deleted_at is null`, nip).Scan(
-		&principal.ID, &principal.NIP, &principal.Name, &principal.UnitID, &principal.UnitName,
+		where u.nip = $1 and u.is_active and u.deleted_at is null
+		union all
+		select aa.account_id::text, 'admin', '', aa.username, aa.name, '', 'Administrator Sistem', 'admin',
+		       'admin', true, aa.must_change_password, '', null::timestamptz,
+		       '', null::timestamptz, aa.password_hash
+		from public.admin_accounts aa
+		where aa.username = lower($1) and aa.is_active
+		limit 1`, identifier).Scan(
+		&principal.ID, &principal.AccountType, &principal.NIP, &principal.Username,
+		&principal.Name, &principal.UnitID, &principal.UnitName,
 		&principal.UnitType, &principal.PositionRole, &principal.IsAdmin,
 		&principal.MustChangePassword, &principal.Email, &emailVerifiedAt,
 		&principal.Phone, &phoneVerifiedAt, &passwordHash,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		s.recordLoginAttempt(ctx, nip, ip, false)
+		s.recordLoginAttempt(ctx, identifier, ip, false)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -131,12 +148,12 @@ func (s *Service) Login(ctx context.Context, nip, password, ip, userAgent string
 	principal.EmailVerified = emailVerifiedAt != nil
 	principal.PhoneVerified = phoneVerifiedAt != nil
 
-	valid, err := s.passwordMatches(ctx, principal.NIP, passwordHash, password)
+	valid, err := s.passwordMatches(ctx, principal.LoginIdentifier(), passwordHash, password)
 	if err != nil {
 		return LoginResult{}, err
 	}
 	if !valid {
-		s.recordLoginAttempt(ctx, nip, ip, false)
+		s.recordLoginAttempt(ctx, identifier, ip, false)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
@@ -160,12 +177,18 @@ func (s *Service) Login(ctx context.Context, nip, password, ip, userAgent string
 		principal.ID, sessionHash, csrfHash, ip, userAgent, s.cfg.SessionTTL.String()); err != nil {
 		return LoginResult{}, err
 	}
-	if _, err := tx.Exec(ctx, `update public.users set last_login_at = now() where id = $1`, principal.ID); err != nil {
-		return LoginResult{}, err
+	if principal.AccountType == "admin" {
+		if _, err := tx.Exec(ctx, `update public.admin_accounts set last_login_at = now() where account_id = $1`, principal.ID); err != nil {
+			return LoginResult{}, err
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `update public.users set last_login_at = now() where id = $1`, principal.ID); err != nil {
+			return LoginResult{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.login_attempts (nip, ip_address, was_successful)
-		values ($1, nullif($2, '')::inet, true)`, nip, ip); err != nil {
+		values ($1, nullif($2, '')::inet, true)`, identifier, ip); err != nil {
 		return LoginResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -188,8 +211,8 @@ func (s *Service) AuthenticateRequest(ctx context.Context, request *http.Request
 	var session Session
 	var emailVerifiedAt, phoneVerifiedAt *time.Time
 	err = s.pool.QueryRow(ctx, `
-		select u.id::text, u.nip, u.name, u.unit_id::text, un.name, un.unit_type,
-		       u.position_role, u.is_admin, u.must_change_password,
+		select u.id::text, 'user', u.nip, '', u.name, u.unit_id::text, un.name, un.unit_type,
+		       u.position_role, false, u.must_change_password,
 		       coalesce(u.email, ''), u.email_verified_at,
 		       coalesce(u.phone_e164, ''), u.phone_verified_at,
 		       s.id::text, s.csrf_hash
@@ -198,8 +221,18 @@ func (s *Service) AuthenticateRequest(ctx context.Context, request *http.Request
 		join public.units un on un.id = u.unit_id
 		where s.token_hash = $1 and s.revoked_at is null and s.expires_at > now()
 		  and s.last_seen_at > now() - $2::interval
-		  and u.is_active and u.deleted_at is null`, hash[:], s.cfg.SessionIdleTTL.String()).Scan(
-		&principal.ID, &principal.NIP, &principal.Name, &principal.UnitID, &principal.UnitName,
+		  and u.is_active and u.deleted_at is null
+		union all
+		select aa.account_id::text, 'admin', '', aa.username, aa.name, '', 'Administrator Sistem', 'admin',
+		       'admin', true, aa.must_change_password, '', null::timestamptz,
+		       '', null::timestamptz, s.id::text, s.csrf_hash
+		from public.sessions s
+		join public.admin_accounts aa on aa.account_id = s.user_id
+		where s.token_hash = $1 and s.revoked_at is null and s.expires_at > now()
+		  and s.last_seen_at > now() - $2::interval and aa.is_active
+		limit 1`, hash[:], s.cfg.SessionIdleTTL.String()).Scan(
+		&principal.ID, &principal.AccountType, &principal.NIP, &principal.Username,
+		&principal.Name, &principal.UnitID, &principal.UnitName,
 		&principal.UnitType, &principal.PositionRole, &principal.IsAdmin,
 		&principal.MustChangePassword, &principal.Email, &emailVerifiedAt,
 		&principal.Phone, &phoneVerifiedAt, &session.ID, &session.CSRFHash,
@@ -241,10 +274,10 @@ func (s *Service) Logout(ctx context.Context, sessionID string) error {
 }
 
 func (s *Service) ChangePassword(ctx context.Context, principal Principal, currentPassword, newPassword string) error {
-	if err := ValidatePassword(newPassword, principal.NIP); err != nil {
+	if err := ValidatePassword(newPassword, principal.LoginIdentifier()); err != nil {
 		return err
 	}
-	valid, err := s.VerifyPassword(ctx, principal.ID, currentPassword)
+	valid, err := s.VerifyPassword(ctx, principal, currentPassword)
 	if err != nil {
 		return err
 	}
@@ -256,11 +289,20 @@ func (s *Service) ChangePassword(ctx context.Context, principal Principal, curre
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		update public.users
-		set password_hash = crypt($2, gen_salt('bf', 12)), must_change_password = false
-		where id = $1`, principal.ID, newPassword); err != nil {
-		return err
+	if principal.AccountType == "admin" {
+		if _, err := tx.Exec(ctx, `
+			update public.admin_accounts
+			set password_hash = crypt($2, gen_salt('bf', 12)), must_change_password = false
+			where account_id = $1`, principal.ID, newPassword); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `
+			update public.users
+			set password_hash = crypt($2, gen_salt('bf', 12)), must_change_password = false
+			where id = $1`, principal.ID, newPassword); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		update public.sessions set revoked_at = now()
@@ -270,13 +312,19 @@ func (s *Service) ChangePassword(ctx context.Context, principal Principal, curre
 	return tx.Commit(ctx)
 }
 
-func (s *Service) VerifyPassword(ctx context.Context, userID, password string) (bool, error) {
-	var nip string
+func (s *Service) VerifyPassword(ctx context.Context, principal Principal, password string) (bool, error) {
+	var identifier string
 	var passwordHash *string
-	if err := s.pool.QueryRow(ctx, `select nip, password_hash from public.users where id = $1`, userID).Scan(&nip, &passwordHash); err != nil {
-		return false, err
+	if principal.AccountType == "admin" {
+		if err := s.pool.QueryRow(ctx, `select username, password_hash from public.admin_accounts where account_id = $1 and is_active`, principal.ID).Scan(&identifier, &passwordHash); err != nil {
+			return false, err
+		}
+	} else {
+		if err := s.pool.QueryRow(ctx, `select nip, password_hash from public.users where id = $1`, principal.ID).Scan(&identifier, &passwordHash); err != nil {
+			return false, err
+		}
 	}
-	return s.passwordMatches(ctx, nip, passwordHash, password)
+	return s.passwordMatches(ctx, identifier, passwordHash, password)
 }
 
 func (s *Service) RequestPasswordReset(ctx context.Context, nip, channel, ip string) error {
@@ -368,7 +416,10 @@ func (s *Service) ResetPassword(ctx context.Context, nip, channel, otp, newPassw
 }
 
 func (s *Service) StartContactChange(ctx context.Context, principal Principal, channel, destination, currentPassword string) error {
-	valid, err := s.VerifyPassword(ctx, principal.ID, currentPassword)
+	if principal.AccountType != "user" {
+		return errors.New("kontak pemulihan hanya tersedia untuk akun pegawai")
+	}
+	valid, err := s.VerifyPassword(ctx, principal, currentPassword)
 	if err != nil {
 		return err
 	}
@@ -426,6 +477,9 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 }
 
 func (s *Service) VerifyContactChange(ctx context.Context, principal Principal, channel, otp string) error {
+	if principal.AccountType != "user" {
+		return errors.New("kontak pemulihan hanya tersedia untuk akun pegawai")
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
@@ -488,12 +542,12 @@ func (s *Service) ClearCookies(response http.ResponseWriter) {
 	}
 }
 
-func ValidatePassword(password, nip string) error {
+func ValidatePassword(password, loginIdentifier string) error {
 	if !utf8.ValidString(password) || len(password) < 10 || len(password) > 128 {
 		return errors.New("password harus berisi 10–128 karakter")
 	}
-	if strings.Contains(strings.ToLower(password), strings.ToLower(nip)) || password == nip {
-		return errors.New("password baru tidak boleh memuat NIP")
+	if loginIdentifier != "" && strings.Contains(strings.ToLower(password), strings.ToLower(loginIdentifier)) {
+		return errors.New("password baru tidak boleh memuat NIP atau username")
 	}
 	classes := 0
 	var upper, lower, digit, symbol bool
@@ -544,21 +598,21 @@ func (s *Service) passwordMatches(ctx context.Context, nip string, hash *string,
 	return valid, nil
 }
 
-func (s *Service) loginRateLimited(ctx context.Context, nip, ip string) (bool, error) {
-	var nipFailures, ipFailures int
+func (s *Service) loginRateLimited(ctx context.Context, identifier, ip string) (bool, error) {
+	var identifierFailures, ipFailures int
 	err := s.pool.QueryRow(ctx, `
 		select
 		  count(*) filter (where nip = $1 and not was_successful),
 		  count(*) filter (where ip_address = nullif($2, '')::inet and not was_successful)
 		from public.login_attempts
-		where occurred_at > now() - interval '15 minutes'`, nip, ip).Scan(&nipFailures, &ipFailures)
-	return nipFailures >= 8 || ipFailures >= 30, err
+		where occurred_at > now() - interval '15 minutes'`, identifier, ip).Scan(&identifierFailures, &ipFailures)
+	return identifierFailures >= 8 || ipFailures >= 30, err
 }
 
-func (s *Service) recordLoginAttempt(ctx context.Context, nip, ip string, success bool) {
+func (s *Service) recordLoginAttempt(ctx context.Context, identifier, ip string, success bool) {
 	_, _ = s.pool.Exec(ctx, `
 		insert into public.login_attempts (nip, ip_address, was_successful)
-		values (nullif($1, ''), nullif($2, '')::inet, $3)`, nip, ip, success)
+		values (nullif($1, ''), nullif($2, '')::inet, $3)`, identifier, ip, success)
 }
 
 func (s *Service) createAndQueueOTP(ctx context.Context, userID, name, purpose, channel, destination, ip string) error {
@@ -616,6 +670,21 @@ func numericOTP() (string, error) {
 	}
 	value := uint32(raw[0])<<24 | uint32(raw[1])<<16 | uint32(raw[2])<<8 | uint32(raw[3])
 	return fmt.Sprintf("%06d", value%1000000), nil
+}
+
+func validLoginIdentifier(value string) bool {
+	if validNIP(value) {
+		return true
+	}
+	if len(value) < 3 || len(value) > 64 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func validNIP(nip string) bool {

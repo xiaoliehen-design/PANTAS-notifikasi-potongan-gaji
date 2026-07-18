@@ -144,7 +144,7 @@ function showApp() {
     $("#password-dialog").showModal();
     return;
   }
-  if (!location.hash) location.hash = "#dashboard";
+  if (!location.hash) location.hash = state.user.is_admin ? "#monitoring" : "#dashboard";
   renderRoute();
 }
 
@@ -158,19 +158,21 @@ const baseNavigation = [
 ];
 
 function buildNavigation() {
-  const items = [...baseNavigation];
-  if (isSupervisor()) items.push(
-    { section: "Kepemimpinan" },
-    { id: "monitoring", label: "Monitoring Unit", icon: "◎" },
-    { id: "warnings", label: "Peringatan", icon: "△" },
-    { id: "reviews", label: "Verifikasi Banding", icon: "✓" },
-  );
-  if (state.user.is_admin) items.push(
+  const items = state.user.is_admin ? [
     { section: "Administrator" },
+    { id: "monitoring", label: "Monitoring Kantor", icon: "◎" },
+    { id: "warnings", label: "Peringatan", icon: "△" },
     { id: "admin-reviews", label: "Keputusan Banding", icon: "◆" },
     { id: "admin-users", label: "Pengguna & Unit", icon: "◉" },
     { id: "admin-imports", label: "Import Data", icon: "⇧" },
     { id: "admin-parameters", label: "Parameter", icon: "⚙" },
+    { id: "profile", label: "Profil & Keamanan", icon: "○" },
+  ] : [...baseNavigation];
+  if (!state.user.is_admin && isSupervisor()) items.push(
+    { section: "Kepemimpinan" },
+    { id: "monitoring", label: "Monitoring Unit", icon: "◎" },
+    { id: "warnings", label: "Peringatan", icon: "△" },
+    { id: "reviews", label: "Verifikasi Banding", icon: "✓" },
   );
   $("#main-nav").innerHTML = items.map(item => item.section
     ? `<div class="nav-section">${h(item.section)}</div>`
@@ -185,6 +187,7 @@ async function renderRoute() {
   if (!state.user) return;
   const raw = location.hash.replace(/^#/, "") || "dashboard";
   const [route] = raw.split("?");
+  if (state.user.is_admin && ["dashboard", "history", "deductions", "appeals", "reviews"].includes(route)) return navigate("monitoring");
   state.route = route;
   $$(".nav-link").forEach(link => link.classList.toggle("active", link.dataset.route === route));
   const labels = {
@@ -381,11 +384,10 @@ function openUserDialog(user) {
       <label class="field"><span>Nama</span><input name="name" value="${h(user?.name||"")}" required></label>
       <label class="field"><span>Unit</span><select name="unit_id" required>${unitOptions(state.units,user?.unit_id)}</select></label>
       <label class="field"><span>Jabatan</span><select name="role">${roleOptions(user?.role||"staff")}</select></label>
-      <label class="check-row"><input type="checkbox" name="is_admin" ${user?.is_admin?"checked":""}> Akses administrator</label>
       ${user ? `<label class="check-row"><input type="checkbox" name="is_active" ${user.is_active?"checked":""}> Akun aktif</label><label class="field"><span>Dasar perubahan</span><input name="reason" placeholder="Opsional"></label>` : ""}
       <button class="button button-primary" type="submit">Simpan</button>
     </form>`);
-  $("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);values.is_admin=event.currentTarget.elements.is_admin.checked;if(user)values.is_active=event.currentTarget.elements.is_active.checked;try{await api(user?`/api/admin/users/${user.id}`:"/api/admin/users",{method:user?"PATCH":"POST",body:values});dialog.close();dialog.remove();toast("Berhasil","Data pengguna disimpan.","success");await renderAdminUsers();}catch(error){toast("Belum tersimpan",error.message,"error");}});
+  $("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);if(user)values.is_active=event.currentTarget.elements.is_active.checked;try{await api(user?`/api/admin/users/${user.id}`:"/api/admin/users",{method:user?"PATCH":"POST",body:values});dialog.close();dialog.remove();toast("Berhasil","Data pengguna disimpan.","success");await renderAdminUsers();}catch(error){toast("Belum tersimpan",error.message,"error");}});
 }
 
 async function renderAdminImports() {
@@ -427,6 +429,12 @@ async function saveRule(button){const row=button.closest("tr");const rate=Number
 function openReasonDialog(reason){const dialog=dynamicDialog(`${reason?"Ubah":"Tambah"} kategori alasan`,`<form class="stack-lg">${!reason?`<label class="field"><span>Kode</span><input name="code" pattern="[a-z0-9_]+" required></label>`:""}<label class="field"><span>Label</span><input name="label" value="${h(reason?.label||"")}" required></label><label class="field"><span>Deskripsi</span><textarea name="description">${h(reason?.description||"")}</textarea></label><label class="field"><span>Urutan</span><input name="sort_order" type="number" value="${reason?.sort_order||0}"></label>${reason?`<label class="check-row"><input name="is_active" type="checkbox" ${reason.is_active?"checked":""}> Aktif</label>`:""}<button class="button button-primary">Simpan</button></form>`);$("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);values.sort_order=Number(values.sort_order);if(reason)values.is_active=event.currentTarget.elements.is_active.checked;try{await api(reason?`/api/admin/reasons/${reason.id}`:"/api/admin/reasons",{method:reason?"PATCH":"POST",body:values});dialog.close();dialog.remove();await renderAdminParameters();}catch(error){toast("Belum tersimpan",error.message,"error");}});}
 
 async function renderProfile(){
+  if(state.user.is_admin){
+    page.innerHTML=`${pageIntro("Profil & keamanan","Administrator adalah akun sistem yang terpisah dari data pegawai.")}
+      <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>@${h(state.user.username)}</p><span class="status status-active">Administrator Sistem</span></section><section class="panel"><div class="panel-header"><div><h3>Keamanan akun</h3><p>Username admin tidak menggunakan NIP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Password</strong><small>Gunakan password unik dan ganti secara berkala.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
+    $("[data-change-password]").addEventListener("click",()=>$("#password-dialog").showModal());
+    return;
+  }
   page.innerHTML=`${pageIntro("Profil & keamanan","Kontak terverifikasi digunakan untuk pemulihan password.")}
     <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>${h(state.user.nip)}</p><span class="status status-active">${h(roleLabel(state.user.position_role))}</span><p>${h(state.user.unit_name)}</p></section><section class="panel"><div class="panel-header"><div><h3>Kontak pemulihan</h3><p>Perubahan memerlukan password dan kode OTP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Email</strong><small>${h(state.user.email||"Belum ditambahkan")} · ${state.user.email_verified?"Terverifikasi":"Belum terverifikasi"}</small></div><button class="button button-small button-secondary" data-contact="email">Ubah</button></div><div class="contact-card"><div><strong>Nomor HP</strong><small>${h(state.user.phone||"Belum ditambahkan")} · ${state.user.phone_verified?"Terverifikasi":"Belum terverifikasi"}</small></div><button class="button button-small button-secondary" data-contact="phone">Ubah</button></div><div class="contact-card"><div><strong>Password</strong><small>Ganti berkala dan jangan gunakan NIP.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
   $$('[data-contact]').forEach(button=>button.addEventListener("click",()=>openContactDialog(button.dataset.contact)));
@@ -459,7 +467,7 @@ function warningCard(item){return `<article class="data-card warning-card"><div 
 function appealForm(options){return `<form id="appeal-form" class="card-list">${options.days.map(day=>`<article class="appeal-day"><div class="appeal-day-summary"><span class="eyebrow">Tanggal potongan</span><div class="appeal-date">${formatDateLong(day.date)}</div><div class="code-list">${day.components.map(c=>`<span class="code-chip">${h(c.code)} · ${percent(c.rate)}</span>`).join("")}</div><p class="rate">Total ${percent(day.rate)}</p></div><div class="appeal-form-fields"><label class="field"><span>Kategori alasan</span><select name="reason_${day.attendance_id}" required><option value="">Pilih alasan</option>${options.reasons.map(r=>`<option value="${r.id}">${h(r.label)}</option>`).join("")}</select></label><label class="field"><span>Penjelasan</span><textarea name="explanation_${day.attendance_id}" minlength="10" maxlength="3000" placeholder="Jelaskan kronologi dan alasan koreksi untuk tanggal ini…" required></textarea></label><label class="file-drop"><span>＋</span><span><strong>Dokumen pendukung (opsional)</strong><small>PDF, JPG, atau PNG · maks. 5 MB</small></span><input name="document_${day.attendance_id}" type="file" accept="application/pdf,image/jpeg,image/png"></label></div></article>`).join("")}<button class="button button-primary" type="submit">Ajukan ${options.days.length} hari banding</button></form>`;}
 function appealHistoryCard(appeal){return `<article class="data-card"><div class="data-card-header"><div><span class="eyebrow">${h(appeal.period_label)}</span><h3>${appeal.items.length} hari diajukan</h3></div>${status(appeal.status)}</div><div class="card-list space-top">${appeal.items.map(item=>`<div class="summary-row"><div><strong>${formatDate(item.date)}</strong><small class="block">${h(item.reason)} · ${statusText(item.admin_status)}</small><div data-document-list></div></div><div class="text-right"><span class="rate">${percent(item.original)} → ${percent(item.adjusted)}</span>${item.document_count?`<button class="link-button block" data-documents="${item.id}">${item.document_count} dokumen</button>`:""}</div></div>`).join("")}</div></article>`;}
 function reviewCard(item,admin){return `<article class="data-card review-card"><div class="data-card-header"><div><span class="eyebrow">${h(item.period)} · ${formatDate(item.date)}</span><h3>${h(item.name)}</h3><p>${h(item.nip)} · ${h(item.unit)}</p></div><span class="rate">${percent(item.rate)}</span></div><div><span class="code-chip">${h(item.reason)}</span><p>${h(item.explanation)}</p></div>${item.document_count?`<div><button class="button button-small button-ghost" data-documents="${item.id}">Buka ${item.document_count} dokumen</button><div data-document-list class="page-actions space-top"></div></div>`:""}${admin?`<div class="callout callout-info"><span>✓</span><div><strong>Verifikasi atasan: ${h(statusText(item.supervisor_status))}</strong><br>${h(item.supervisor_comment||"Tanpa komentar")}</div></div>`:""}<div class="review-actions"><label class="field"><span>Komentar (opsional)</span><textarea maxlength="2000" placeholder="Catatan keputusan…"></textarea></label>${admin?`<label class="field"><span>Potongan hasil jika disetujui (%)</span><input name="adjusted_rate" type="number" min="0" max="${item.rate*100}" step="0.01" value="0"></label>`:""}<div class="review-buttons"><button class="button button-danger" data-review-submit="${item.id}" data-decision="${admin?"rejected":"rejected"}">Tolak</button><button class="button button-primary" data-review-submit="${item.id}" data-decision="${admin?"approved":"accepted"}">${admin?"Setujui":"Terima verifikasi"}</button></div></div></article>`;}
-function adminUserTable(items){return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Nama / NIP</th><th>Unit</th><th>Jabatan</th><th>Status</th><th>Kontak</th><th></th></tr></thead><tbody>${items.map(user=>`<tr><td><strong>${h(user.name)}</strong><br><small>${h(user.nip)}</small></td><td>${h(user.unit_name)}</td><td>${h(roleLabel(user.role))}${user.is_admin?`<br><span class="status status-warning">Admin</span>`:""}</td><td>${status(user.is_active?"active":"inactive")}${user.must_change_password?`<br><small>password awal</small>`:""}</td><td>${user.email_verified?"Email ✓":"—"}${user.phone_verified?" · HP ✓":""}</td><td><div class="page-actions"><button class="button button-small button-ghost" data-edit-user data-user='${attributeJSON(user)}'>Ubah</button><button class="button button-small button-ghost" data-reset-user="${user.id}">Reset</button><button class="button button-small button-ghost" data-delete-user="${user.id}">Hapus</button></div></td></tr>`).join("")}</tbody></table></div>`;}
+function adminUserTable(items){return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Nama / NIP</th><th>Unit</th><th>Jabatan</th><th>Status</th><th>Kontak</th><th></th></tr></thead><tbody>${items.map(user=>`<tr><td><strong>${h(user.name)}</strong><br><small>${h(user.nip)}</small></td><td>${h(user.unit_name)}</td><td>${h(roleLabel(user.role))}</td><td>${status(user.is_active?"active":"inactive")}${user.must_change_password?`<br><small>password awal</small>`:""}</td><td>${user.email_verified?"Email ✓":"—"}${user.phone_verified?" · HP ✓":""}</td><td><div class="page-actions"><button class="button button-small button-ghost" data-edit-user data-user='${attributeJSON(user)}'>Ubah</button><button class="button button-small button-ghost" data-reset-user="${user.id}">Reset</button><button class="button button-small button-ghost" data-delete-user="${user.id}">Hapus</button></div></td></tr>`).join("")}</tbody></table></div>`;}
 function importCard(item){return `<article class="data-card"><div class="data-card-header"><div><span class="eyebrow">Versi ${item.version}</span><h4>${h(item.label)}</h4></div>${status(item.status)}</div><p>${h(item.filename)}</p><div class="card-meta"><span>${numberID(item.rows)} baris</span><span>· ${numberID(item.employees)} pegawai</span><span>· ${h(item.integrity)}</span></div>${item.status==="draft"?`<div class="page-actions space-top"><button class="button button-small button-primary" data-publish-import="${item.id}">Publikasikan</button><button class="button button-small button-ghost" data-reject-import="${item.id}">Batalkan</button></div>`:""}</article>`;}
 function importPreview(p){const ready=p.ready_to_publish;return `<div class="callout ${ready?"callout-info":"callout-danger"} section-top"><span>${ready?"✓":"!"}</span><div><strong>${ready?"Validasi berhasil":"Perlu perbaikan"}</strong><br>${h(p.period_label)} · ${h(p.integrity_status)}</div></div><div class="preview-grid">${previewStat("Baris aktif",numberID(p.rows))}${previewStat("Pegawai",numberID(p.employees))}${previewStat("Hari potongan",numberID(p.deduction_days))}${previewStat("Total akumulasi",percent(p.total_deduction))}${previewStat("Baris kosong diabaikan",numberID(p.blank_rows_ignored))}${previewStat("Beda unit",numberID(p.unit_mismatches?.length||0))}</div>${p.warnings?.length?`<div class="callout"><span>i</span><div>${p.warnings.map(h).join("<br>")}</div></div>`:""}${p.missing_users?.length?`<div class="callout callout-danger"><span>!</span><div><strong>${p.missing_users.length} NIP belum terdaftar</strong><br>${p.missing_users.slice(0,8).map(x=>`${h(x.name)} (${h(x.nip)})`).join("<br>")}</div></div>`:""}${ready?`<button class="button button-primary button-full section-top" data-publish-import="${p.batch_id}">Publikasikan ${h(p.period_label)}</button>`:""}`;}
 function previewStat(label,value){return `<div class="preview-stat"><small>${h(label)}</small><strong>${h(String(value))}</strong></div>`;}
@@ -471,7 +479,7 @@ function unitOptions(units,selected){return units.filter(u=>u.is_active).map(u=>
 function roleOptions(selected){return [["staff","Staf"],["section_head","Kepala Seksi/Subbagian"],["division_head","Kepala Bidang/Bagian"],["office_head","Kepala Kantor"],["functional","Fungsional"]].map(([value,label])=>`<option value="${value}" ${value===selected?"selected":""}>${label}</option>`).join("");}
 function status(value){return `<span class="status status-${h(value)}">${h(statusText(value))}</span>`;}
 function statusText(value){return ({pending:"Menunggu",accepted:"Diterima",approved:"Disetujui",rejected:"Ditolak",submitted:"Diajukan",supervisor_review:"Verifikasi atasan",admin_review:"Keputusan admin",finalized:"Selesai",published:"Dipublikasikan",draft:"Draft",superseded:"Diganti",active:"Aktif",inactive:"Nonaktif"})[value]||value||"—";}
-function roleLabel(value){return ({staff:"Staf",section_head:"Kepala Seksi/Subbagian",division_head:"Kepala Bidang/Bagian",office_head:"Kepala Kantor",functional:"Fungsional"})[value]||value;}
+function roleLabel(value){return ({staff:"Staf",section_head:"Kepala Seksi/Subbagian",division_head:"Kepala Bidang/Bagian",office_head:"Kepala Kantor",functional:"Fungsional",admin:"Administrator Sistem"})[value]||value;}
 function bindGoButtons(){$$('[data-go]').forEach(button=>button.addEventListener("click",()=>navigate(button.dataset.go)));}
 
 async function api(path, options={}) {

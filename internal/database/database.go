@@ -38,12 +38,12 @@ func Open(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func BootstrapAdmin(ctx context.Context, pool *pgxpool.Pool, nip, name string) error {
-	if nip == "" {
+func BootstrapAdmin(ctx context.Context, pool *pgxpool.Pool, username, name, initialPassword string) error {
+	if username == "" {
 		return nil
 	}
 	var id string
-	if err := pool.QueryRow(ctx, "select public.pantas_bootstrap_admin($1, $2)", nip, name).Scan(&id); err != nil {
+	if err := pool.QueryRow(ctx, "select public.pantas_bootstrap_admin($1, $2, $3)", username, name, initialPassword).Scan(&id); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
 	return nil

@@ -22,7 +22,9 @@ services:
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
         value: pantas-appeals
-      - key: BOOTSTRAP_ADMIN_NIP
+      - key: BOOTSTRAP_ADMIN_USERNAME
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
         sync: false
       - key: BOOTSTRAP_ADMIN_NAME
         sync: false

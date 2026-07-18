@@ -62,19 +62,19 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/auth/me", a.withAuth(a.me))
 	mux.Handle("POST /api/auth/logout", a.withAuth(a.logout))
 	mux.Handle("POST /api/auth/change-password", a.withAuth(a.changePassword))
-	mux.Handle("POST /api/profile/contact/start", a.withAuth(a.startContactChange))
-	mux.Handle("POST /api/profile/contact/verify", a.withAuth(a.verifyContactChange))
-	mux.Handle("GET /api/dashboard", a.withAuth(a.dashboard))
-	mux.Handle("GET /api/history", a.withAuth(a.history))
-	mux.Handle("GET /api/deductions", a.withAuth(a.deductions))
+	mux.Handle("POST /api/profile/contact/start", a.withUser(a.startContactChange))
+	mux.Handle("POST /api/profile/contact/verify", a.withUser(a.verifyContactChange))
+	mux.Handle("GET /api/dashboard", a.withUser(a.dashboard))
+	mux.Handle("GET /api/history", a.withUser(a.history))
+	mux.Handle("GET /api/deductions", a.withUser(a.deductions))
 	mux.Handle("GET /api/notifications", a.withAuth(a.notifications))
 	mux.Handle("POST /api/notifications/{id}/read", a.withAuth(a.markNotificationRead))
 	mux.Handle("GET /api/monitoring", a.withSupervisor(a.monitoring))
 	mux.Handle("GET /api/warnings", a.withSupervisor(a.warnings))
-	mux.Handle("GET /api/appeals", a.withAuth(a.appeals))
-	mux.Handle("GET /api/appeals/options", a.withAuth(a.appealOptions))
-	mux.Handle("POST /api/appeals", a.withAuth(a.createAppeal))
-	mux.Handle("POST /api/appeals/items/{id}/document", a.withAuth(a.uploadAppealDocument))
+	mux.Handle("GET /api/appeals", a.withUser(a.appeals))
+	mux.Handle("GET /api/appeals/options", a.withUser(a.appealOptions))
+	mux.Handle("POST /api/appeals", a.withUser(a.createAppeal))
+	mux.Handle("POST /api/appeals/items/{id}/document", a.withUser(a.uploadAppealDocument))
 	mux.Handle("GET /api/appeals/items/{id}/documents", a.withAuth(a.appealDocuments))
 	mux.Handle("GET /api/reviews/supervisor", a.withSupervisor(a.supervisorQueue))
 	mux.Handle("POST /api/reviews/supervisor/{id}", a.withSupervisor(a.supervisorDecision))
@@ -128,6 +128,16 @@ func (a *App) withAdmin(next handlerFunc) http.Handler {
 	return a.withAuth(func(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
 		if !principal.IsAdmin {
 			writeError(response, http.StatusForbidden, "Akses administrator diperlukan.", "forbidden")
+			return
+		}
+		next(response, request, principal)
+	})
+}
+
+func (a *App) withUser(next handlerFunc) http.Handler {
+	return a.withAuth(func(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
+		if principal.AccountType != "user" {
+			writeError(response, http.StatusForbidden, "Menu pribadi hanya tersedia bagi akun pegawai.", "forbidden")
 			return
 		}
 		next(response, request, principal)

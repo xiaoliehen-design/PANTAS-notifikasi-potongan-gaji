@@ -36,3 +36,31 @@ func TestNormalizePhoneIndonesia(t *testing.T) {
 		}
 	}
 }
+
+func TestValidLoginIdentifier(t *testing.T) {
+	tests := map[string]bool{
+		"199001012010011001": true,
+		"admin.pantas":       true,
+		"admin_pantas-2":     true,
+		"Admin.Pantas":       false,
+		"12":                 false,
+		"admin pantas":       false,
+		"123456789012345678": true,
+	}
+	for input, expected := range tests {
+		if actual := validLoginIdentifier(input); actual != expected {
+			t.Errorf("validLoginIdentifier(%q) = %v, want %v", input, actual, expected)
+		}
+	}
+}
+
+func TestPrincipalLoginIdentifier(t *testing.T) {
+	user := Principal{AccountType: "user", NIP: "199001012010011001"}
+	admin := Principal{AccountType: "admin", Username: "admin.pantas"}
+	if user.LoginIdentifier() != user.NIP {
+		t.Fatalf("user identifier = %q", user.LoginIdentifier())
+	}
+	if admin.LoginIdentifier() != admin.Username {
+		t.Fatalf("admin identifier = %q", admin.LoginIdentifier())
+	}
+}

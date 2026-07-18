@@ -21,12 +21,13 @@ Blueprint menggunakan plan `starter`, health check `/healthz`, dan auto-deploy s
 | `SUPABASE_URL` | `https://PROJECT_REF.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Secret/service-role key, server-side saja |
 | `SUPABASE_STORAGE_BUCKET` | `pantas-appeals` |
-| `BOOTSTRAP_ADMIN_NIP` | NIP 18 digit akun admin pertama |
-| `BOOTSTRAP_ADMIN_NAME` | Nama akun admin pertama |
+| `BOOTSTRAP_ADMIN_USERNAME` | Username admin, misalnya `admin.pantas` |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Password awal kuat, 12–128 karakter dan minimal tiga jenis karakter |
+| `BOOTSTRAP_ADMIN_NAME` | Nama tampilan administrator |
 | `RESEND_API_KEY` | API key Resend |
 | `EMAIL_FROM` | Pengirim dari domain yang sudah diverifikasi |
 
-`BOOTSTRAP_ADMIN_NIP` boleh menunjuk salah satu NIP yang sudah ada pada seed. Saat startup, akun tersebut diberi `is_admin=true` tanpa mengubah password yang sudah pernah diganti. Password awal tetap NIP bila belum pernah diganti.
+Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak memerlukan NIP dan tidak ikut dalam monitoring pegawai. Username dinormalisasi menjadi huruf kecil. Password environment hanya digunakan saat akun pertama kali dibuat dan tidak menimpa password yang sudah diganti melalui aplikasi.
 
 ## Environment opsional/default
 
@@ -44,15 +45,34 @@ Blueprint menggunakan plan `starter`, health check `/healthz`, dan auto-deploy s
 
 ## Urutan deployment yang aman
 
-1. Jalankan migration dan seed Supabase terlebih dahulu.
+1. Jalankan migration `001`, migration `002`, lalu seed Supabase.
 2. Buat Blueprint Render dan isi semua secret.
 3. Deploy pertama.
 4. Salin URL `https://...onrender.com`, set sebagai `APP_URL`, lalu redeploy.
 5. Buka `/healthz`; respons harus `{"status":"ok","database":"ok"}`.
-6. Login admin, ganti password awal, isi dan verifikasi email.
+6. Login memakai username/password bootstrap admin dan segera ganti password awal.
 7. Uji import pada satu periode, banding satu hari, verifikasi atasan, dan keputusan admin.
 
 Jika memakai custom domain, ubah `APP_URL` ke custom domain HTTPS yang benar. Origin check PANTAS sengaja menolak request mutasi dari origin lain.
+
+## Reset darurat password admin
+
+Admin tidak memakai fitur lupa password pegawai. Jika password admin terlupa dan tidak ada admin lain, jalankan melalui SQL Editor Supabase lalu login dan segera ganti kembali:
+
+```sql
+update public.admin_accounts
+set password_hash = crypt('Password-Sementara-2026!', gen_salt('bf', 12)),
+    must_change_password = true
+where username = 'admin.pantas';
+
+update public.sessions
+set revoked_at = now()
+where user_id = (
+  select account_id from public.admin_accounts where username = 'admin.pantas'
+);
+```
+
+Ganti username dan password sementara pada contoh tersebut. Jangan menyimpan query yang sudah berisi password nyata.
 
 ## Email
 
