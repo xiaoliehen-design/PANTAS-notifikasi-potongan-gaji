@@ -292,14 +292,14 @@ func (s *Service) ChangePassword(ctx context.Context, principal Principal, curre
 	if principal.AccountType == "admin" {
 		if _, err := tx.Exec(ctx, `
 			update public.admin_accounts
-			set password_hash = crypt($2, gen_salt('bf', 12)), must_change_password = false
+			set password_hash = extensions.crypt($2, extensions.gen_salt('bf', 12)), must_change_password = false
 			where account_id = $1`, principal.ID, newPassword); err != nil {
 			return err
 		}
 	} else {
 		if _, err := tx.Exec(ctx, `
 			update public.users
-			set password_hash = crypt($2, gen_salt('bf', 12)), must_change_password = false
+			set password_hash = extensions.crypt($2, extensions.gen_salt('bf', 12)), must_change_password = false
 			where id = $1`, principal.ID, newPassword); err != nil {
 			return err
 		}
@@ -402,7 +402,7 @@ func (s *Service) ResetPassword(ctx context.Context, nip, channel, otp, newPassw
 	}
 	if _, err := tx.Exec(ctx, `
 		update public.users
-		set password_hash = crypt($2, gen_salt('bf', 12)), must_change_password = false
+		set password_hash = extensions.crypt($2, extensions.gen_salt('bf', 12)), must_change_password = false
 		where id = $1`, userID, newPassword); err != nil {
 		return err
 	}
@@ -592,7 +592,7 @@ func (s *Service) passwordMatches(ctx context.Context, nip string, hash *string,
 		return subtle.ConstantTimeCompare([]byte(password), []byte(nip)) == 1, nil
 	}
 	var valid bool
-	if err := s.pool.QueryRow(ctx, `select crypt($1, $2) = $2`, password, *hash).Scan(&valid); err != nil {
+	if err := s.pool.QueryRow(ctx, `select extensions.crypt($1, $2) = $2`, password, *hash).Scan(&valid); err != nil {
 		return false, err
 	}
 	return valid, nil

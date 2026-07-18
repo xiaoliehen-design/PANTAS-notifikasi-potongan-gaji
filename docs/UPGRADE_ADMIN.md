@@ -9,7 +9,10 @@ Panduan ini digunakan bila migration `001` dan seed pegawai sudah pernah dijalan
 
    ```text
    supabase/migrations/002_separate_admin_accounts.sql
+   supabase/migrations/003_fix_pgcrypto_schema.sql
    ```
+
+   Jika migration `002` sudah pernah berhasil dan Render hanya gagal dengan error `gen_salt does not exist`, cukup jalankan migration `003`.
 
 3. Pastikan query selesai tanpa error. Migration mempertahankan seluruh pegawai, presensi, banding, import, dan audit yang sudah ada. Flag admin lama pada pegawai dinonaktifkan.
 4. Di **Render → Environment**, tambahkan:
@@ -42,4 +45,3 @@ where is_admin;
 ```
 
 Hasil yang diharapkan setelah startup aplikasi: 1.123 pegawai, satu baris administrator, dan nol flag admin lama pada pegawai.
-

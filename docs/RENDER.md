@@ -45,7 +45,7 @@ Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak meme
 
 ## Urutan deployment yang aman
 
-1. Jalankan migration `001`, migration `002`, lalu seed Supabase.
+1. Jalankan migration `001`, `002`, `003`, lalu seed Supabase.
 2. Buat Blueprint Render dan isi semua secret.
 3. Deploy pertama.
 4. Salin URL `https://...onrender.com`, set sebagai `APP_URL`, lalu redeploy.
@@ -61,7 +61,10 @@ Admin tidak memakai fitur lupa password pegawai. Jika password admin terlupa dan
 
 ```sql
 update public.admin_accounts
-set password_hash = crypt('Password-Sementara-2026!', gen_salt('bf', 12)),
+set password_hash = extensions.crypt(
+      'Password-Sementara-2026!',
+      extensions.gen_salt('bf', 12)
+    ),
     must_change_password = true
 where username = 'admin.pantas';
 

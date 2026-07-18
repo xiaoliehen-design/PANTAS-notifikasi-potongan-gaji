@@ -10,9 +10,10 @@ Di **SQL Editor**, jalankan file berikut secara berurutan dan tunggu sampai masi
 
 1. `supabase/migrations/001_pantas_schema.sql`
 2. `supabase/migrations/002_separate_admin_accounts.sql`
-3. `supabase/seed/002_employees_from_reference.sql`
+3. `supabase/migrations/003_fix_pgcrypto_schema.sql`
+4. `supabase/seed/002_employees_from_reference.sql`
 
-Migration pertama membuat skema utama. Migration kedua membuat identitas akun dan tabel administrator yang terpisah dari pegawai, serta memigrasikan referensi audit lama. Seed berikutnya membuat struktur organisasi dan 1.123 akun pegawai.
+Migration pertama membuat skema utama. Migration kedua membuat identitas akun dan tabel administrator yang terpisah dari pegawai, serta memigrasikan referensi audit lama. Migration ketiga memastikan fungsi password `pgcrypto` memakai schema `extensions` milik Supabase. Seed berikutnya membuat struktur organisasi dan 1.123 akun pegawai.
 
 Seed mengandung data pribadi. Jangan menaruhnya di repository publik.
 

@@ -43,6 +43,7 @@ Contoh yang diminta juga terpetakan: Heru Prayitno sebagai Kepala Bagian Umum da
 2. Di **SQL Editor**, jalankan berurutan:
    - `supabase/migrations/001_pantas_schema.sql`
    - `supabase/migrations/002_separate_admin_accounts.sql`
+   - `supabase/migrations/003_fix_pgcrypto_schema.sql`
    - `supabase/seed/002_employees_from_reference.sql`
 3. Salin connection string **Session pooler port 5432** dan tambahkan `sslmode=require` bila belum ada.
 4. Buat repository GitHub **private**, lalu unggah seluruh isi folder ini ke root repository.

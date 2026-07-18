@@ -135,7 +135,7 @@ begin
       account_id, username, name, password_hash, must_change_password, is_active
     ) values (
       v_account_id, v_username, btrim(p_name),
-      crypt(p_initial_password, gen_salt('bf', 12)), true, true
+      extensions.crypt(p_initial_password, extensions.gen_salt('bf', 12)), true, true
     );
   else
     update public.admin_accounts

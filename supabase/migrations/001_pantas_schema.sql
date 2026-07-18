@@ -3,7 +3,8 @@
 
 begin;
 
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create or replace function public.pantas_set_updated_at()
 returns trigger
