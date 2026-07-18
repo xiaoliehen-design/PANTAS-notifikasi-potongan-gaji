@@ -118,7 +118,15 @@ func (a *App) startContactChange(response http.ResponseWriter, request *http.Req
 		return
 	}
 	if err := a.auth.StartContactChange(request.Context(), principal, input.Channel, input.Destination, input.CurrentPassword); err != nil {
-		writeError(response, http.StatusUnprocessableEntity, err.Error(), "contact_invalid")
+		switch {
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			writeError(response, http.StatusUnauthorized, err.Error(), "invalid_credentials")
+		case auth.IsContactInputError(err):
+			writeError(response, http.StatusUnprocessableEntity, err.Error(), "contact_invalid")
+		default:
+			a.log.Error("start contact change", "error", err)
+			writeError(response, http.StatusInternalServerError, "Kode verifikasi belum dapat dikirim.", "internal_error")
+		}
 		return
 	}
 	writeJSON(response, http.StatusAccepted, map[string]any{"message": "Kode verifikasi telah dijadwalkan untuk dikirim."})
@@ -133,7 +141,15 @@ func (a *App) verifyContactChange(response http.ResponseWriter, request *http.Re
 		return
 	}
 	if err := a.auth.VerifyContactChange(request.Context(), principal, input.Channel, input.OTP); err != nil {
-		writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_otp")
+		switch {
+		case errors.Is(err, auth.ErrInvalidOTP):
+			writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_otp")
+		case auth.IsContactInputError(err):
+			writeError(response, http.StatusUnprocessableEntity, err.Error(), "contact_invalid")
+		default:
+			a.log.Error("verify contact change", "error", err)
+			writeError(response, http.StatusInternalServerError, "Kontak belum dapat diverifikasi.", "internal_error")
+		}
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"message": "Kontak berhasil diverifikasi."})

@@ -78,6 +78,23 @@ type LoginResult struct {
 	CSRFToken    string
 }
 
+type ContactInputError struct {
+	message string
+}
+
+func (e *ContactInputError) Error() string {
+	return e.message
+}
+
+func IsContactInputError(err error) bool {
+	var inputError *ContactInputError
+	return errors.As(err, &inputError)
+}
+
+func contactInputError(message string) error {
+	return &ContactInputError{message: message}
+}
+
 type Service struct {
 	pool *pgxpool.Pool
 	cfg  config.Config
@@ -417,7 +434,7 @@ func (s *Service) ResetPassword(ctx context.Context, nip, channel, otp, newPassw
 
 func (s *Service) StartContactChange(ctx context.Context, principal Principal, channel, destination, currentPassword string) error {
 	if principal.AccountType != "user" {
-		return errors.New("kontak pemulihan hanya tersedia untuk akun pegawai")
+		return contactInputError("kontak pemulihan hanya tersedia untuk akun pegawai")
 	}
 	valid, err := s.VerifyPassword(ctx, principal, currentPassword)
 	if err != nil {
@@ -431,7 +448,7 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 	} else if channel == "phone" {
 		destination, err = normalizePhone(destination)
 	} else {
-		return errors.New("kanal kontak tidak valid")
+		return contactInputError("kanal kontak tidak valid")
 	}
 	if err != nil {
 		return err
@@ -446,7 +463,7 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 		return err
 	}
 	if exists {
-		return errors.New("kontak sudah digunakan akun lain")
+		return contactInputError("kontak sudah digunakan akun lain")
 	}
 
 	otp, err := numericOTP()
@@ -469,16 +486,16 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 		values ($1, $2, $3, $4, now() + interval '10 minutes')`, principal.ID, channel, destination, hash); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	userID := principal.ID
+	if err := mailer.Queue(ctx, tx, &userID, channel, destination, "contact_otp", map[string]any{"name": principal.Name, "otp": otp}); err != nil {
 		return err
 	}
-	userID := principal.ID
-	return mailer.Queue(ctx, s.pool, &userID, channel, destination, "contact_otp", map[string]any{"name": principal.Name, "otp": otp})
+	return tx.Commit(ctx)
 }
 
 func (s *Service) VerifyContactChange(ctx context.Context, principal Principal, channel, otp string) error {
 	if principal.AccountType != "user" {
-		return errors.New("kontak pemulihan hanya tersedia untuk akun pegawai")
+		return contactInputError("kontak pemulihan hanya tersedia untuk akun pegawai")
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -510,7 +527,7 @@ func (s *Service) VerifyContactChange(ctx context.Context, principal Principal, 
 	} else if channel == "phone" {
 		_, err = tx.Exec(ctx, `update public.users set phone_e164 = $2, phone_verified_at = now() where id = $1`, principal.ID, destination)
 	} else {
-		return errors.New("kanal kontak tidak valid")
+		return contactInputError("kanal kontak tidak valid")
 	}
 	if err != nil {
 		return err
@@ -637,14 +654,14 @@ func (s *Service) createAndQueueOTP(ctx context.Context, userID, name, purpose, 
 		userID, purpose, channel, destination, hash, ip); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
 	template := "password_otp"
 	if purpose != "password_reset" {
 		template = "contact_otp"
 	}
-	return mailer.Queue(ctx, s.pool, &userID, channel, destination, template, map[string]any{"name": name, "otp": otp})
+	if err := mailer.Queue(ctx, tx, &userID, channel, destination, template, map[string]any{"name": name, "otp": otp}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) otpHash(userID, purpose, channel, otp string) []byte {
@@ -703,7 +720,7 @@ func normalizeEmail(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	address, err := mailaddress.ParseAddress(value)
 	if err != nil || strings.ToLower(address.Address) != value || len(value) > 254 {
-		return "", errors.New("alamat email tidak valid")
+		return "", contactInputError("alamat email tidak valid")
 	}
 	return value, nil
 }
@@ -722,10 +739,10 @@ func normalizePhone(value string) (string, error) {
 	case strings.HasPrefix(digits, "62"):
 	case plus:
 	default:
-		return "", errors.New("nomor HP harus menggunakan format Indonesia, misalnya 0812… atau +62812…")
+		return "", contactInputError("nomor HP harus menggunakan format Indonesia, misalnya 0812… atau +62812…")
 	}
 	if len(digits) < 9 || len(digits) > 15 {
-		return "", errors.New("nomor HP tidak valid")
+		return "", contactInputError("nomor HP tidak valid")
 	}
 	return "+" + digits, nil
 }

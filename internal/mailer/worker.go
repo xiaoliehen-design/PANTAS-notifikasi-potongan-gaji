@@ -14,6 +14,7 @@ import (
 
 	"github.com/bcpriok/pantas/internal/config"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,6 +32,10 @@ type job struct {
 	Template    string
 	Payload     map[string]any
 	Attempts    int
+}
+
+type Execer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
 func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *Worker {
@@ -57,14 +62,14 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func Queue(ctx context.Context, pool *pgxpool.Pool, userID *string, channel, destination, template string, payload map[string]any) error {
+func Queue(ctx context.Context, database Execer, userID *string, channel, destination, template string, payload map[string]any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, `
+	_, err = database.Exec(ctx, `
 		insert into public.notification_jobs (user_id, channel, destination, template_code, payload)
-		values ($1, $2, $3, $4, $5::jsonb)`, userID, channel, destination, template, encoded)
+		values ($1, $2, $3, $4, $5::jsonb)`, userID, channel, destination, template, string(encoded))
 	return err
 }
 
