@@ -41,7 +41,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	authService := auth.New(pool, cfg)
+	worker := mailer.New(pool, cfg, logger)
+	authService := auth.New(pool, cfg, worker)
 	importService := importer.New(pool)
 	storageClient := storage.New(cfg)
 	app, err := httpapi.New(pool, cfg, authService, importService, storageClient, logger)
@@ -49,7 +50,6 @@ func main() {
 		logger.Error("build web app", "error", err)
 		os.Exit(1)
 	}
-	worker := mailer.New(pool, cfg, logger)
 	go worker.Run(rootCtx)
 
 	server := &http.Server{

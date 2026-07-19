@@ -33,6 +33,7 @@ Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak meme
 
 | Key | Default | Keterangan |
 |---|---:|---|
+| `RESEND_API_URL` | `https://api.resend.com/emails` | Endpoint API Resend; biasanya tidak perlu diubah |
 | `PHONE_OTP_WEBHOOK_URL` | kosong | Endpoint SMS/WhatsApp internal |
 | `PHONE_OTP_WEBHOOK_TOKEN` | kosong | Bearer token webhook |
 | `TRUST_PROXY` | `true` | Memakai IP pertama `X-Forwarded-For` dari Render |
@@ -79,12 +80,13 @@ Ganti username dan password sementara pada contoh tersebut. Jangan menyimpan que
 
 ## Email
 
-PANTAS mengantrekan email di database lalu worker pada proses Go mengirimkannya melalui Resend. Email hanya dikirim kepada akun yang emailnya telah diverifikasi.
+Untuk OTP, PANTAS langsung meminta Resend menerima pengiriman sebelum menampilkan formulir kode. Jika provider menolak atau konfigurasi belum lengkap, pengguna memperoleh notifikasi kegagalan dan tetap berada pada halaman yang sama. Salinan status pengiriman tetap dicatat di `notification_jobs`; worker akan mencoba kembali jika terjadi kegagalan sementara. Email pemberitahuan non-OTP tetap dikirim melalui antrean.
 
 Sebelum go-live:
 
 - verifikasi domain pengirim di Resend;
 - gunakan alamat seperti `PANTAS <notifikasi@domain.go.id>`;
+- pastikan `RESEND_API_KEY` dan `EMAIL_FROM` terisi di **Environment** service Render, lalu lakukan redeploy;
 - uji OTP, publikasi periode, pengajuan banding, dan hasil banding;
 - pantau baris `failed` pada `public.notification_jobs`.
 
@@ -100,7 +102,7 @@ Jika diaktifkan, PANTAS mengirim `POST` JSON:
 }
 ```
 
-Header `Authorization: Bearer <PHONE_OTP_WEBHOOK_TOKEN>` ditambahkan bila token diisi. Provider harus mengembalikan status 2xx. Tanpa webhook, fitur pemulihan lewat nomor HP tidak dapat mengirim OTP; pemulihan email tetap berfungsi.
+Header `Authorization: Bearer <PHONE_OTP_WEBHOOK_TOKEN>` ditambahkan bila token diisi. Provider harus mengembalikan status 2xx. Tanpa webhook, tombol penambahan nomor HP akan menampilkan bahwa kanal belum dikonfigurasi; sistem tidak lagi memberi pesan seolah-olah OTP telah terkirim.
 
 ## Troubleshooting
 
@@ -109,4 +111,6 @@ Header `Authorization: Bearer <PHONE_OTP_WEBHOOK_TOKEN>` ditambahkan bila token 
 - **Health check 503:** migration belum selesai atau database tidak dapat dijangkau.
 - **Dokumen gagal upload:** cek bucket, `SUPABASE_URL`, dan service-role key.
 - **Email berstatus failed:** cek `RESEND_API_KEY`, domain pengirim, dan isi `last_error` pada `notification_jobs`.
+- **OTP email tidak masuk walau status sent:** periksa folder spam serta dashboard/log Resend. Status `sent` berarti API provider menerima permintaan, sedangkan keputusan inbox/spam berada pada server email penerima.
+- **OTP nomor HP tidak terkirim:** pastikan webhook menerima format JSON pada bagian di atas dan mengembalikan HTTP 2xx.
 - **403 invalid_origin:** nilai `APP_URL` tidak sama dengan origin URL yang dibuka pengguna.

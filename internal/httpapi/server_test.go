@@ -64,3 +64,26 @@ func TestServeSPAStaticAssetsRequireRevalidation(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want no-cache", cacheControl)
 	}
 }
+
+func TestDeductionRuleInputValidation(t *testing.T) {
+	for _, source := range []string{"late", "early_leave", "leave", "status", "shift"} {
+		if !validRuleSource(source) {
+			t.Errorf("valid source %q rejected", source)
+		}
+	}
+	for _, source := range []string{"", "overtime", "late "} {
+		if validRuleSource(source) {
+			t.Errorf("invalid source %q accepted", source)
+		}
+	}
+	for _, code := range []string{"TL4", "Cuti Khusus Dipotong", "PSW-5"} {
+		if !validRuleCode(code) {
+			t.Errorf("valid code %q rejected", code)
+		}
+	}
+	for _, code := range []string{"", " TL4", "TL4\n"} {
+		if validRuleCode(code) {
+			t.Errorf("invalid code %q accepted", code)
+		}
+	}
+}

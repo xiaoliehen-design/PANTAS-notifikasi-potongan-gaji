@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bcpriok/pantas/internal/auth"
 	"github.com/bcpriok/pantas/internal/importer"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (a *App) adminUsers(response http.ResponseWriter, request *http.Request, _ auth.Principal) {
@@ -333,6 +335,67 @@ func (a *App) adminRules(response http.ResponseWriter, request *http.Request, _ 
 	writeJSON(response, http.StatusOK, map[string]any{"items": items})
 }
 
+func (a *App) adminCreateRule(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
+	var input struct {
+		Source    string  `json:"source"`
+		Code      string  `json:"code"`
+		Label     string  `json:"label"`
+		Rate      float64 `json:"rate"`
+		IsActive  *bool   `json:"is_active"`
+		SortOrder *int    `json:"sort_order"`
+	}
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	input.Source = strings.TrimSpace(input.Source)
+	input.Code = strings.TrimSpace(input.Code)
+	input.Label = strings.TrimSpace(input.Label)
+	if !validRuleSource(input.Source) || !validRuleCode(input.Code) || len([]rune(input.Label)) < 2 || len([]rune(input.Label)) > 200 || input.Rate < 0 || input.Rate > 1 {
+		writeError(response, http.StatusUnprocessableEntity, "Sumber, kode, label, atau persentase aturan tidak valid.", "invalid_rule")
+		return
+	}
+	active := true
+	if input.IsActive != nil {
+		active = *input.IsActive
+	}
+	sortOrder := 0
+	if input.SortOrder == nil {
+		if err := a.pool.QueryRow(request.Context(), `select coalesce(max(sort_order), 0) + 10 from public.deduction_rules`).Scan(&sortOrder); err != nil {
+			a.internalError(response, "rule next order", err)
+			return
+		}
+	} else {
+		sortOrder = *input.SortOrder
+		if sortOrder < -100000 || sortOrder > 100000 {
+			writeError(response, http.StatusUnprocessableEntity, "Urutan aturan tidak valid.", "invalid_rule")
+			return
+		}
+	}
+
+	var id string
+	err := a.pool.QueryRow(request.Context(), `
+		insert into public.deduction_rules (source_field, code, label, rate, is_active, sort_order)
+		values ($1, $2, $3, $4, $5, $6)
+		returning id::text`, input.Source, input.Code, input.Label, input.Rate, active, sortOrder).Scan(&id)
+	if err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && databaseError.Code == "23505" {
+			writeError(response, http.StatusConflict, "Kode tersebut sudah digunakan pada sumber yang sama.", "rule_exists")
+			return
+		}
+		a.internalError(response, "rule create", err)
+		return
+	}
+	a.audit(request, actor.ID, "deduction_rule.create", "deduction_rule", id, map[string]any{
+		"source": input.Source, "code": input.Code, "label": input.Label,
+		"rate": input.Rate, "active": active, "sort_order": sortOrder,
+	})
+	writeJSON(response, http.StatusCreated, map[string]any{"item": map[string]any{
+		"id": id, "source": input.Source, "code": input.Code, "label": input.Label,
+		"rate": input.Rate, "is_active": active, "sort_order": sortOrder,
+	}})
+}
+
 func (a *App) adminUpdateRule(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
 	id := request.PathValue("id")
 	var input struct {
@@ -359,6 +422,28 @@ func (a *App) adminUpdateRule(response http.ResponseWriter, request *http.Reques
 	}
 	a.audit(request, actor.ID, "deduction_rule.update", "deduction_rule", id, map[string]any{"label": input.Label, "rate": input.Rate, "active": input.IsActive})
 	response.WriteHeader(http.StatusNoContent)
+}
+
+func validRuleSource(value string) bool {
+	switch value {
+	case "late", "early_leave", "leave", "status", "shift":
+		return true
+	default:
+		return false
+	}
+}
+
+func validRuleCode(value string) bool {
+	length := len([]rune(value))
+	if length < 1 || length > 100 || value != strings.TrimSpace(value) {
+		return false
+	}
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) adminReasons(response http.ResponseWriter, request *http.Request, _ auth.Principal) {

@@ -30,6 +30,8 @@ services:
         sync: false
       - key: RESEND_API_KEY
         sync: false
+      - key: RESEND_API_URL
+        value: https://api.resend.com/emails
       - key: EMAIL_FROM
         sync: false
       - key: PHONE_OTP_WEBHOOK_URL

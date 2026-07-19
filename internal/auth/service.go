@@ -25,12 +25,14 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("NIP/username atau password salah")
-	ErrRateLimited        = errors.New("terlalu banyak percobaan; coba kembali beberapa menit lagi")
-	ErrUnauthenticated    = errors.New("sesi tidak valid atau telah berakhir")
-	ErrInvalidCSRF        = errors.New("token keamanan tidak valid")
-	ErrInvalidOTP         = errors.New("kode verifikasi salah atau sudah kedaluwarsa")
-	ErrContactUnavailable = errors.New("kontak belum tersedia atau belum diverifikasi")
+	ErrInvalidCredentials  = errors.New("NIP/username atau password salah")
+	ErrRateLimited         = errors.New("terlalu banyak percobaan; coba kembali beberapa menit lagi")
+	ErrUnauthenticated     = errors.New("sesi tidak valid atau telah berakhir")
+	ErrInvalidCSRF         = errors.New("token keamanan tidak valid")
+	ErrInvalidOTP          = errors.New("kode verifikasi salah atau sudah kedaluwarsa")
+	ErrContactUnavailable  = errors.New("kontak belum tersedia atau belum diverifikasi")
+	ErrDeliveryUnavailable = errors.New("layanan pengiriman kode verifikasi belum dikonfigurasi")
+	ErrDeliveryFailed      = errors.New("kode verifikasi belum dapat dikirim; silakan coba lagi")
 )
 
 const (
@@ -96,16 +98,17 @@ func contactInputError(message string) error {
 }
 
 type Service struct {
-	pool *pgxpool.Pool
-	cfg  config.Config
+	pool     *pgxpool.Pool
+	cfg      config.Config
+	delivery *mailer.Worker
 }
 
 type contextKey int
 
 const principalKey contextKey = 1
 
-func New(pool *pgxpool.Pool, cfg config.Config) *Service {
-	return &Service{pool: pool, cfg: cfg}
+func New(pool *pgxpool.Pool, cfg config.Config, delivery *mailer.Worker) *Service {
+	return &Service{pool: pool, cfg: cfg, delivery: delivery}
 }
 
 func WithPrincipal(ctx context.Context, principal Principal) context.Context {
@@ -349,6 +352,9 @@ func (s *Service) RequestPasswordReset(ctx context.Context, nip, channel, ip str
 	if !validNIP(nip) || (channel != "email" && channel != "phone") {
 		return nil
 	}
+	if s.delivery == nil || !s.delivery.ChannelConfigured(channel) {
+		return ErrDeliveryUnavailable
+	}
 	var userID, name, destination string
 	var verifiedAt *time.Time
 	column := "u.email"
@@ -436,6 +442,9 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 	if principal.AccountType != "user" {
 		return contactInputError("kontak pemulihan hanya tersedia untuk akun pegawai")
 	}
+	if channel != "email" && channel != "phone" {
+		return contactInputError("kanal kontak tidak valid")
+	}
 	valid, err := s.VerifyPassword(ctx, principal, currentPassword)
 	if err != nil {
 		return err
@@ -443,12 +452,13 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 	if !valid {
 		return ErrInvalidCredentials
 	}
+	if s.delivery == nil || !s.delivery.ChannelConfigured(channel) {
+		return ErrDeliveryUnavailable
+	}
 	if channel == "email" {
 		destination, err = normalizeEmail(destination)
 	} else if channel == "phone" {
 		destination, err = normalizePhone(destination)
-	} else {
-		return contactInputError("kanal kontak tidak valid")
 	}
 	if err != nil {
 		return err
@@ -487,10 +497,17 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 		return err
 	}
 	userID := principal.ID
-	if err := mailer.Queue(ctx, tx, &userID, channel, destination, "contact_otp", map[string]any{"name": principal.Name, "otp": otp}); err != nil {
+	jobID, err := mailer.QueueImmediate(ctx, tx, &userID, channel, destination, "contact_otp", map[string]any{"name": principal.Name, "otp": otp})
+	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if err := s.delivery.DeliverClaimed(ctx, jobID); err != nil {
+		return ErrDeliveryFailed
+	}
+	return nil
 }
 
 func (s *Service) VerifyContactChange(ctx context.Context, principal Principal, channel, otp string) error {
@@ -658,10 +675,17 @@ func (s *Service) createAndQueueOTP(ctx context.Context, userID, name, purpose, 
 	if purpose != "password_reset" {
 		template = "contact_otp"
 	}
-	if err := mailer.Queue(ctx, tx, &userID, channel, destination, template, map[string]any{"name": name, "otp": otp}); err != nil {
+	jobID, err := mailer.QueueImmediate(ctx, tx, &userID, channel, destination, template, map[string]any{"name": name, "otp": otp})
+	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if err := s.delivery.DeliverClaimed(ctx, jobID); err != nil {
+		return ErrDeliveryFailed
+	}
+	return nil
 }
 
 func (s *Service) otpHash(userID, purpose, channel, otp string) []byte {

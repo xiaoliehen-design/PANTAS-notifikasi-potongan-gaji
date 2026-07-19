@@ -5,6 +5,7 @@ const state = {
   route: "dashboard",
   dashboard: null,
   units: null,
+  sidebarCollapsed: readSidebarPreference(),
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -36,13 +37,17 @@ function bindGlobalEvents() {
   }));
   $("#logout-button").addEventListener("click", logout);
   $("#menu-button").addEventListener("click", () => $("#sidebar").classList.toggle("open"));
+  $("#sidebar-collapse-button").addEventListener("click", toggleSidebar);
   $("#notification-button").addEventListener("click", openNotifications);
   $("#drawer-close").addEventListener("click", closeNotifications);
   $("#drawer-backdrop").addEventListener("click", closeNotifications);
   $("#profile-button").addEventListener("click", () => navigate("profile"));
   $("#password-form").addEventListener("submit", changePassword);
   window.addEventListener("hashchange", renderRoute);
-  window.addEventListener("resize", () => state.dashboard && drawHistoryChart(state.dashboard.history || []));
+  window.addEventListener("resize", () => {
+    applySidebarState();
+    if (state.dashboard) drawHistoryChart(state.dashboard.history || []);
+  });
   document.addEventListener("click", async event => {
     const documentButton = event.target.closest("[data-documents]");
     if (documentButton) await revealDocuments(documentButton);
@@ -108,7 +113,14 @@ async function changePassword(event) {
     state.user = null;
     showAuth();
     toast("Berhasil", data.message, "success");
-  } catch (error) { toast("Password belum berubah", error.message, "error"); }
+  } catch (error) {
+    toast("Password belum berubah", error.message, "error");
+    if (error.code === "current_password_invalid") {
+      form.elements.current_password.value = "";
+      form.elements.current_password.setAttribute("aria-invalid", "true");
+      form.elements.current_password.focus();
+    }
+  }
   finally { setBusy(button, false); }
 }
 
@@ -125,6 +137,8 @@ function setAuthView(name) {
 function showAuth() {
   $("#app-shell").hidden = true;
   $("#auth-shell").hidden = false;
+  $("#sidebar").classList.remove("open");
+  if ($("#password-dialog").open) $("#password-dialog").close();
   closeNotifications();
   history.replaceState(null, "", location.pathname);
   setAuthView("login");
@@ -139,6 +153,7 @@ function showApp() {
   $("#sidebar-name").textContent = state.user.name;
   $("#sidebar-unit").textContent = state.user.unit_name;
   $("#top-name").textContent = state.user.name.split(" ")[0];
+  applySidebarState();
   buildNavigation();
   if (state.user.must_change_password) {
     $("#password-dialog").showModal();
@@ -146,6 +161,26 @@ function showApp() {
   }
   if (!location.hash) location.hash = state.user.is_admin ? "#monitoring" : "#dashboard";
   renderRoute();
+}
+
+function readSidebarPreference() {
+  try { return localStorage.getItem("pantas_sidebar_collapsed") === "true"; }
+  catch { return false; }
+}
+
+function applySidebarState() {
+  const compact = state.sidebarCollapsed && window.matchMedia("(min-width: 861px)").matches;
+  $("#app-shell").classList.toggle("sidebar-collapsed", compact);
+  const button = $("#sidebar-collapse-button");
+  button.setAttribute("aria-label", compact ? "Perbesar menu" : "Minimize menu");
+  button.title = compact ? "Perbesar menu" : "Minimize menu";
+  $("span", button).textContent = compact ? "›" : "‹";
+}
+
+function toggleSidebar() {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  try { localStorage.setItem("pantas_sidebar_collapsed", String(state.sidebarCollapsed)); } catch {}
+  applySidebarState();
 }
 
 const baseNavigation = [
@@ -176,7 +211,7 @@ function buildNavigation() {
   );
   $("#main-nav").innerHTML = items.map(item => item.section
     ? `<div class="nav-section">${h(item.section)}</div>`
-    : `<a class="nav-link" href="#${item.id}" data-route="${item.id}"><span class="nav-icon">${item.icon}</span>${h(item.label)}</a>`
+    : `<a class="nav-link" href="#${item.id}" data-route="${item.id}" title="${h(item.label)}" aria-label="${h(item.label)}"><span class="nav-icon">${item.icon}</span><span class="nav-label">${h(item.label)}</span></a>`
   ).join("");
   $$(".nav-link").forEach(link => link.addEventListener("click", () => $("#sidebar").classList.remove("open")));
 }
@@ -415,16 +450,45 @@ async function renderAdminParameters() {
   const [parameters,rules,reasons]=await Promise.all([api("/api/admin/parameters"),api("/api/admin/rules"),api("/api/admin/reasons")]);
   page.innerHTML=`${pageIntro("Parameter sistem","Perubahan hanya dapat dilakukan administrator dan dicatat pada audit trail.")}
     <section class="panel"><div class="panel-header"><div><h3>Deteksi peringatan & dashboard</h3><p>Persentase disimpan sebagai nilai 0 sampai 1</p></div></div><div class="panel-body settings-grid">${parameters.items.map(parameterCard).join("")}</div></section>
-    <section class="panel section-top"><div class="panel-header"><div><h3>Aturan potongan</h3><p>Tarif digunakan saat import berikutnya</p></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Sumber</th><th>Kode</th><th>Label</th><th>Tarif</th><th>Aktif</th><th></th></tr></thead><tbody>${rules.items.map(ruleRow).join("")}</tbody></table></div></section>
+    <section class="panel section-top"><div class="panel-header"><div><h3>Aturan potongan</h3><p>Tarif digunakan saat import berikutnya</p></div><button class="button button-small button-primary" data-add-rule>+ Tambah aturan</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Sumber</th><th>Kode</th><th>Label</th><th>Tarif</th><th>Aktif</th><th></th></tr></thead><tbody>${rules.items.map(ruleRow).join("")}</tbody></table></div></section>
     <section class="panel section-top"><div class="panel-header"><div><h3>Kategori alasan banding</h3><p>Dapat ditambah atau dinonaktifkan</p></div><button class="button button-small button-primary" data-add-reason>+ Tambah</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Kode</th><th>Label</th><th>Deskripsi</th><th>Aktif</th><th></th></tr></thead><tbody>${reasons.items.map(reasonRow).join("")}</tbody></table></div></section>`;
   $$('[data-save-parameter]').forEach(button=>button.addEventListener("click",()=>saveParameter(button)));
   $$('[data-save-rule]').forEach(button=>button.addEventListener("click",()=>saveRule(button)));
+  $("[data-add-rule]").addEventListener("click",openRuleDialog);
   $$('[data-edit-reason]').forEach(button=>button.addEventListener("click",()=>openReasonDialog(JSON.parse(button.dataset.reason))));
   $("[data-add-reason]").addEventListener("click",()=>openReasonDialog(null));
 }
 
 async function saveParameter(button){const card=button.closest(".setting-card");const raw=$("input",card).value;let value;try{value=JSON.parse(raw);}catch{return toast("Nilai tidak valid","Gunakan JSON valid, misalnya 6, 0.005, atau {\"P\":1}.","error");}try{await api(`/api/admin/parameters/${encodeURIComponent(button.dataset.saveParameter)}`,{method:"PATCH",body:{value}});toast("Parameter disimpan","Berlaku pada perhitungan berikutnya.","success");}catch(error){toast("Belum tersimpan",error.message,"error");}}
 async function saveRule(button){const row=button.closest("tr");const rate=Number($("[name=rate]",row).value)/100;const label=$("[name=label]",row).value;const is_active=$("[name=active]",row).checked;try{await api(`/api/admin/rules/${button.dataset.saveRule}`,{method:"PATCH",body:{label,rate,is_active}});toast("Aturan disimpan","Import lama tidak diubah.","success");}catch(error){toast("Belum tersimpan",error.message,"error");}}
+
+function openRuleDialog(){
+  const dialog=dynamicDialog("Tambah aturan potongan",`<form class="stack-lg" id="rule-dialog-form">
+    <label class="field"><span>Sumber data</span><select name="source" required><option value="late">Terlambat</option><option value="early_leave">Pulang sebelum waktunya</option><option value="leave">Cuti</option><option value="status">Status presensi</option><option value="shift">Shift</option></select></label>
+    <label class="field"><span>Kode</span><input name="code" maxlength="100" placeholder="Contoh: TL4" required><small>Harus sama persis dengan kode pada file import.</small></label>
+    <label class="field"><span>Label</span><input name="label" maxlength="200" placeholder="Nama aturan yang mudah dipahami" required></label>
+    <label class="field"><span>Tarif potongan (%)</span><input name="rate" type="number" min="0" max="100" step="0.01" placeholder="0,50" required></label>
+    <label class="field"><span>Urutan (opsional)</span><input name="sort_order" type="number" min="-100000" max="100000" placeholder="Otomatis di urutan terakhir"><small>Kosongkan agar sistem menentukan urutan.</small></label>
+    <label class="check-row"><input name="is_active" type="checkbox" checked> Langsung aktif untuk import berikutnya</label>
+    <button class="button button-primary" type="submit">Tambah aturan</button>
+  </form>`);
+  $("form",dialog).addEventListener("submit",async event=>{
+    event.preventDefault();
+    const form=event.currentTarget;
+    const button=$("button[type=submit]",form);
+    const values=formJSON(form);
+    const body={source:values.source,code:values.code,label:values.label,rate:Number(values.rate)/100,is_active:form.elements.is_active.checked};
+    if(values.sort_order!=="")body.sort_order=Number(values.sort_order);
+    setBusy(button,true,"Menambahkan…");
+    try{
+      await api("/api/admin/rules",{method:"POST",body});
+      dialog.close();dialog.remove();
+      toast("Aturan ditambahkan","Aturan baru digunakan pada import berikutnya.","success");
+      await renderAdminParameters();
+    }catch(error){toast("Aturan belum ditambahkan",error.message,"error");}
+    finally{if(form.isConnected)setBusy(button,false);}
+  });
+}
 
 function openReasonDialog(reason){const dialog=dynamicDialog(`${reason?"Ubah":"Tambah"} kategori alasan`,`<form class="stack-lg">${!reason?`<label class="field"><span>Kode</span><input name="code" pattern="[a-z0-9_]+" required></label>`:""}<label class="field"><span>Label</span><input name="label" value="${h(reason?.label||"")}" required></label><label class="field"><span>Deskripsi</span><textarea name="description">${h(reason?.description||"")}</textarea></label><label class="field"><span>Urutan</span><input name="sort_order" type="number" value="${reason?.sort_order||0}"></label>${reason?`<label class="check-row"><input name="is_active" type="checkbox" ${reason.is_active?"checked":""}> Aktif</label>`:""}<button class="button button-primary">Simpan</button></form>`);$("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);values.sort_order=Number(values.sort_order);if(reason)values.is_active=event.currentTarget.elements.is_active.checked;try{await api(reason?`/api/admin/reasons/${reason.id}`:"/api/admin/reasons",{method:reason?"PATCH":"POST",body:values});dialog.close();dialog.remove();await renderAdminParameters();}catch(error){toast("Belum tersimpan",error.message,"error");}});}
 
@@ -452,8 +516,9 @@ function openContactDialog(channel) {
     const values = formJSON(form);
     setBusy(button, true, "Mengirim…");
     try {
-      await api("/api/profile/contact/start", { method: "POST", body: { channel, ...values } });
+      const delivery = await api("/api/profile/contact/start", { method: "POST", body: { channel, ...values } });
       form.outerHTML = `<form class="stack-lg" data-contact-verify><label class="field"><span>Kode 6 digit</span><input class="otp-input" name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="button button-primary">Verifikasi</button></form>`;
+      toast("Kode terkirim", delivery.message, "success");
       const verifyForm = $("[data-contact-verify]", dialog);
       verifyForm.addEventListener("submit", async verifyEvent => {
         verifyEvent.preventDefault();
@@ -476,6 +541,11 @@ function openContactDialog(channel) {
       });
     } catch (error) {
       toast("Belum dapat mengirim", error.message, "error");
+      if (error.code === "current_password_invalid" && form.isConnected) {
+        form.elements.current_password.value = "";
+        form.elements.current_password.setAttribute("aria-invalid", "true");
+        form.elements.current_password.focus();
+      }
     } finally {
       if (form.isConnected) setBusy(button, false);
     }
@@ -529,7 +599,7 @@ async function api(path, options={}) {
   const response=await fetch(path,{method:options.method||"GET",headers,body,credentials:"same-origin"});
   if(response.status===204)return null;
   const type=response.headers.get("content-type")||"";const data=type.includes("application/json")?await response.json():null;
-  if(!response.ok){if(response.status===401&&options.auth!==false){state.user=null;showAuth();}if(response.status===428&&state.user){$("#password-dialog").showModal();}const error=new Error(data?.error?.message||`Permintaan gagal (${response.status})`);error.code=data?.error?.code;error.data=data;throw error;}
+  if(!response.ok){const code=data?.error?.code;if(response.status===401&&code==="unauthenticated"&&options.auth!==false){state.user=null;showAuth();}if(response.status===428&&state.user){$("#password-dialog").showModal();}const error=new Error(data?.error?.message||`Permintaan gagal (${response.status})`);error.code=code;error.data=data;throw error;}
   return data;
 }
 

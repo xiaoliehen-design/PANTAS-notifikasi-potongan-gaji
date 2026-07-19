@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	mailaddress "net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -25,6 +26,7 @@ type Config struct {
 	SupabaseServiceKey     string
 	SupabaseStorageBucket  string
 	ResendAPIKey           string
+	ResendAPIURL           string
 	EmailFrom              string
 	PhoneWebhookURL        string
 	PhoneWebhookToken      string
@@ -51,6 +53,7 @@ func Load() (Config, error) {
 		SupabaseServiceKey:     strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
 		SupabaseStorageBucket:  env("SUPABASE_STORAGE_BUCKET", "pantas-appeals"),
 		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		ResendAPIURL:           strings.TrimRight(env("RESEND_API_URL", "https://api.resend.com/emails"), "/"),
 		EmailFrom:              strings.TrimSpace(os.Getenv("EMAIL_FROM")),
 		PhoneWebhookURL:        strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_URL")),
 		PhoneWebhookToken:      strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_TOKEN")),
@@ -90,10 +93,42 @@ func Load() (Config, error) {
 	if cfg.SupabaseURL == "" || cfg.SupabaseServiceKey == "" {
 		problems = append(problems, "SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY wajib diisi untuk dokumen banding")
 	}
+	emailPartiallyConfigured := cfg.ResendAPIKey != "" || cfg.EmailFrom != ""
+	if emailPartiallyConfigured && (cfg.ResendAPIKey == "" || cfg.EmailFrom == "") {
+		problems = append(problems, "RESEND_API_KEY dan EMAIL_FROM harus diisi bersamaan agar OTP email dapat dikirim")
+	}
+	if cfg.EmailFrom != "" {
+		if _, err := mailaddress.ParseAddress(cfg.EmailFrom); err != nil {
+			problems = append(problems, "EMAIL_FROM tidak valid")
+		}
+	}
+	if cfg.ResendAPIKey != "" && !validHTTPURL(cfg.ResendAPIURL) {
+		problems = append(problems, "RESEND_API_URL tidak valid")
+	} else if cfg.Environment == "production" && cfg.ResendAPIKey != "" && !isHTTPSURL(cfg.ResendAPIURL) {
+		problems = append(problems, "RESEND_API_URL production wajib menggunakan https")
+	}
+	if cfg.PhoneWebhookURL != "" && !validHTTPURL(cfg.PhoneWebhookURL) {
+		problems = append(problems, "PHONE_OTP_WEBHOOK_URL tidak valid")
+	} else if cfg.Environment == "production" && cfg.PhoneWebhookURL != "" && !isHTTPSURL(cfg.PhoneWebhookURL) {
+		problems = append(problems, "PHONE_OTP_WEBHOOK_URL production wajib menggunakan https")
+	}
+	if cfg.PhoneWebhookToken != "" && cfg.PhoneWebhookURL == "" {
+		problems = append(problems, "PHONE_OTP_WEBHOOK_URL wajib diisi jika PHONE_OTP_WEBHOOK_TOKEN digunakan")
+	}
 	if len(problems) > 0 {
 		return Config{}, errors.New(strings.Join(problems, "; "))
 	}
 	return cfg, nil
+}
+
+func validHTTPURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "https" || parsed.Scheme == "http")
+}
+
+func isHTTPSURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Host != "" && parsed.Scheme == "https"
 }
 
 func (c Config) Address() string { return ":" + c.Port }

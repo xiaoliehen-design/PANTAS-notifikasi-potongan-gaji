@@ -90,6 +90,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/admin/parameters", a.withAdmin(a.adminParameters))
 	mux.Handle("PATCH /api/admin/parameters/{key}", a.withAdmin(a.adminUpdateParameter))
 	mux.Handle("GET /api/admin/rules", a.withAdmin(a.adminRules))
+	mux.Handle("POST /api/admin/rules", a.withAdmin(a.adminCreateRule))
 	mux.Handle("PATCH /api/admin/rules/{id}", a.withAdmin(a.adminUpdateRule))
 	mux.Handle("GET /api/admin/reasons", a.withAdmin(a.adminReasons))
 	mux.Handle("POST /api/admin/reasons", a.withAdmin(a.adminCreateReason))

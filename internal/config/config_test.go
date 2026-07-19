@@ -28,3 +28,19 @@ func TestValidAdminPassword(t *testing.T) {
 		}
 	}
 }
+
+func TestValidHTTPURL(t *testing.T) {
+	for _, value := range []string{"https://api.example.go.id/otp", "http://localhost:8080/test"} {
+		if !validHTTPURL(value) {
+			t.Errorf("validHTTPURL(%q) = false", value)
+		}
+	}
+	for _, value := range []string{"", "api.example.go.id", "ftp://example.go.id/file"} {
+		if validHTTPURL(value) {
+			t.Errorf("validHTTPURL(%q) = true", value)
+		}
+	}
+	if !isHTTPSURL("https://provider.example.go.id/otp") || isHTTPSURL("http://localhost:8080/otp") {
+		t.Fatal("isHTTPSURL did not enforce https")
+	}
+}

@@ -61,11 +61,12 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 	if err := a.auth.ChangePassword(request.Context(), principal, input.CurrentPassword, input.NewPassword); err != nil {
 		status := http.StatusUnprocessableEntity
 		code := "password_invalid"
+		message := err.Error()
 		if errors.Is(err, auth.ErrInvalidCredentials) {
-			status = http.StatusUnauthorized
-			code = "invalid_credentials"
+			code = "current_password_invalid"
+			message = "Password yang Anda masukkan salah."
 		}
-		writeError(response, status, err.Error(), code)
+		writeError(response, status, message, code)
 		return
 	}
 	a.auth.ClearCookies(response)
@@ -81,6 +82,10 @@ func (a *App) forgotPassword(response http.ResponseWriter, request *http.Request
 		return
 	}
 	if err := a.auth.RequestPasswordReset(request.Context(), input.NIP, input.Channel, auth.ClientIP(request, a.cfg.TrustProxy)); err != nil {
+		if errors.Is(err, auth.ErrDeliveryUnavailable) {
+			writeError(response, http.StatusServiceUnavailable, "Kanal pengiriman kode belum dikonfigurasi oleh administrator.", "delivery_unavailable")
+			return
+		}
 		a.log.Error("request password reset", "error", err)
 	}
 	writeJSON(response, http.StatusAccepted, map[string]any{"message": "Jika NIP dan kontak terverifikasi ditemukan, kode reset akan dikirim."})
@@ -120,7 +125,11 @@ func (a *App) startContactChange(response http.ResponseWriter, request *http.Req
 	if err := a.auth.StartContactChange(request.Context(), principal, input.Channel, input.Destination, input.CurrentPassword); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidCredentials):
-			writeError(response, http.StatusUnauthorized, err.Error(), "invalid_credentials")
+			writeError(response, http.StatusUnprocessableEntity, "Password yang Anda masukkan salah.", "current_password_invalid")
+		case errors.Is(err, auth.ErrDeliveryUnavailable):
+			writeError(response, http.StatusServiceUnavailable, "Kanal pengiriman kode belum dikonfigurasi oleh administrator.", "delivery_unavailable")
+		case errors.Is(err, auth.ErrDeliveryFailed):
+			writeError(response, http.StatusBadGateway, err.Error(), "delivery_failed")
 		case auth.IsContactInputError(err):
 			writeError(response, http.StatusUnprocessableEntity, err.Error(), "contact_invalid")
 		default:
@@ -129,7 +138,7 @@ func (a *App) startContactChange(response http.ResponseWriter, request *http.Req
 		}
 		return
 	}
-	writeJSON(response, http.StatusAccepted, map[string]any{"message": "Kode verifikasi telah dijadwalkan untuk dikirim."})
+	writeJSON(response, http.StatusAccepted, map[string]any{"message": "Kode verifikasi berhasil dikirim. Periksa kotak masuk atau pesan pada nomor HP Anda."})
 }
 
 func (a *App) verifyContactChange(response http.ResponseWriter, request *http.Request, principal auth.Principal) {

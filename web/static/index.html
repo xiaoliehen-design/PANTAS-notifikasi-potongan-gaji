@@ -7,21 +7,29 @@
   <meta name="description" content="PANTAS — Pemantauan Absensi dan Tunjangan Secara Akumulatif">
   <title>PANTAS | BC Tanjung Priok</title>
   <link rel="stylesheet" href="/styles.css">
-  <script defer src="/app.js?v=20260718-contact-form-fix"></script>
+  <script defer src="/app.js?v=20260719-profile-rules-sidebar"></script>
 </head>
 <body>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
 
   <main id="auth-shell" class="auth-shell">
     <section class="auth-visual" aria-label="Tentang PANTAS">
+      <div class="auth-orbit auth-orbit-one" aria-hidden="true"></div>
+      <div class="auth-orbit auth-orbit-two" aria-hidden="true"></div>
       <div class="brand brand-light">
         <span class="brand-mark" aria-hidden="true">P</span>
-        <span><strong>PANTAS</strong><small>BC Tanjung Priok</small></span>
+        <span class="brand-copy"><strong>PANTAS</strong><small>BC Tanjung Priok</small></span>
       </div>
       <div class="auth-copy">
+        <span class="auth-badge"><span aria-hidden="true">●</span> Portal internal pegawai</span>
         <span class="eyebrow">Privat · Ringkas · Akuntabel</span>
-        <h1>Potongan Anda,<br>hanya untuk Anda.</h1>
+        <h1>Informasi pribadi.<br><span>Kendali di tangan Anda.</span></h1>
         <p><strong>PANTAS</strong> adalah singkatan dari <strong>Pemantauan Absensi dan Tunjangan Secara Akumulatif</strong>, yang menyajikan informasi presensi tanpa menyebarkan data pribadi pegawai lain.</p>
+        <div class="auth-feature-grid" aria-label="Keunggulan PANTAS">
+          <div><span aria-hidden="true">◈</span><strong>Privasi terjaga</strong><small>Data tampil sesuai kewenangan</small></div>
+          <div><span aria-hidden="true">⌁</span><strong>Riwayat ringkas</strong><small>Tren potongan mudah dibaca</small></div>
+          <div><span aria-hidden="true">◇</span><strong>Banding terarah</strong><small>Penjelasan per tanggal</small></div>
+        </div>
       </div>
       <div class="privacy-note">
         <span class="privacy-icon" aria-hidden="true">✓</span>
@@ -30,23 +38,24 @@
     </section>
 
     <section class="auth-panel">
+      <div class="auth-panel-glow" aria-hidden="true"></div>
       <div class="auth-card">
         <div class="mobile-brand brand">
           <span class="brand-mark" aria-hidden="true">P</span>
-          <span><strong>PANTAS</strong><small>BC Tanjung Priok</small></span>
+          <span class="brand-copy"><strong>PANTAS</strong><small>BC Tanjung Priok</small></span>
         </div>
         <div id="login-view">
-          <span class="eyebrow">Selamat datang</span>
+          <span class="eyebrow">Portal pegawai</span>
           <h2>Masuk ke PANTAS</h2>
           <p class="app-name-expansion"><strong>PANTAS</strong><span>Pemantauan Absensi dan Tunjangan Secara Akumulatif</span></p>
           <p class="muted">Pegawai menggunakan NIP; administrator menggunakan username.</p>
           <form id="login-form" class="stack-lg" novalidate>
-            <label class="field"><span>NIP atau username admin</span><input name="identifier" autocomplete="username" maxlength="64" placeholder="NIP pegawai / username admin" required></label>
-            <label class="field"><span>Password</span><span class="password-wrap"><input name="password" type="password" autocomplete="current-password" required><button class="icon-button password-toggle" type="button" aria-label="Tampilkan password">👁</button></span></label>
-            <button class="button button-primary button-full" type="submit"><span>Masuk</span><span aria-hidden="true">→</span></button>
+            <label class="field auth-field"><span>NIP atau username admin</span><span class="input-with-icon"><span aria-hidden="true">◎</span><input name="identifier" autocomplete="username" maxlength="64" placeholder="Masukkan NIP atau username" required></span></label>
+            <label class="field auth-field"><span>Password</span><span class="password-wrap input-with-icon"><span aria-hidden="true">⌑</span><input name="password" type="password" autocomplete="current-password" placeholder="Masukkan password" required><button class="icon-button password-toggle" type="button" aria-label="Tampilkan password">◉</button></span></label>
+            <button class="button button-primary button-full login-button" type="submit"><span>Masuk dengan aman</span><span aria-hidden="true">→</span></button>
           </form>
-          <button id="show-forgot" class="link-button auth-link" type="button">Lupa password?</button>
-          <p class="auth-footnote">Akun dibuat oleh administrator. Tidak ada pendaftaran publik.</p>
+          <div class="auth-meta"><span><span aria-hidden="true">✓</span> Akses privat</span><button id="show-forgot" class="link-button" type="button">Lupa password?</button></div>
+          <p class="auth-footnote"><span aria-hidden="true">i</span> Akun dikelola administrator dan tidak tersedia pendaftaran publik.</p>
         </div>
 
         <div id="forgot-view" hidden>
@@ -81,11 +90,12 @@
     <aside id="sidebar" class="sidebar">
       <div class="brand brand-light sidebar-brand">
         <span class="brand-mark" aria-hidden="true">P</span>
-        <span><strong>PANTAS</strong><small>BC Tanjung Priok</small></span>
+        <span class="brand-copy"><strong>PANTAS</strong><small>BC Tanjung Priok</small></span>
       </div>
+      <button id="sidebar-collapse-button" class="sidebar-collapse-button" type="button" aria-label="Minimize menu" title="Minimize menu"><span aria-hidden="true">‹</span></button>
       <nav id="main-nav" class="main-nav" aria-label="Navigasi utama"></nav>
       <div class="sidebar-footer">
-        <div class="user-mini"><span id="sidebar-avatar" class="avatar"></span><span><strong id="sidebar-name"></strong><small id="sidebar-unit"></small></span></div>
+        <div class="user-mini"><span id="sidebar-avatar" class="avatar"></span><span class="user-copy"><strong id="sidebar-name"></strong><small id="sidebar-unit"></small></span></div>
         <button id="logout-button" class="sidebar-logout" type="button" title="Keluar">↪</button>
       </div>
     </aside>

@@ -20,8 +20,10 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Total potongan pada cakupan kewenangan dan agregat kantor untuk admin.
 - Peringatan individu dan unit dengan parameter yang hanya dapat diubah admin.
 - Admin dapat menambah, memindahkan, menonaktifkan/menghapus, dan mereset password pengguna.
+- Admin dapat menambah dan mengubah aturan potongan langsung dari Parameter Sistem.
 - Import workbook bulanan dengan validasi format, NIP, tanggal, duplikasi, unit, hash file, staging, dan publikasi atomik.
 - Notifikasi dalam aplikasi dan email setelah periode dipublikasikan.
+- Pengiriman OTP email/nomor HP diverifikasi langsung terhadap respons provider dan kegagalan tidak memutus sesi pengguna.
 - Audit log untuk perubahan penting.
 
 ## Data awal dari workbook

@@ -38,6 +38,11 @@ type Execer interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
+type QueryExecer interface {
+	Execer
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *Worker {
 	return &Worker{
 		pool:   pool,
@@ -71,6 +76,80 @@ func Queue(ctx context.Context, database Execer, userID *string, channel, destin
 		insert into public.notification_jobs (user_id, channel, destination, template_code, payload)
 		values ($1, $2, $3, $4, $5::jsonb)`, userID, channel, destination, template, string(encoded))
 	return err
+}
+
+// QueueImmediate reserves a job for delivery by the request that created it.
+// If the process stops before delivery, the background worker safely retries it
+// after the processing lock expires.
+func QueueImmediate(ctx context.Context, database QueryExecer, userID *string, channel, destination, template string, payload map[string]any) (string, error) {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	var id string
+	err = database.QueryRow(ctx, `
+		insert into public.notification_jobs
+		  (user_id, channel, destination, template_code, payload, status, attempts, locked_at)
+		values ($1, $2, $3, $4, $5::jsonb, 'processing', 1, now())
+		returning id::text`, userID, channel, destination, template, string(encoded)).Scan(&id)
+	return id, err
+}
+
+func (w *Worker) ChannelConfigured(channel string) bool {
+	switch channel {
+	case "email":
+		return w.cfg.ResendAPIKey != "" && w.cfg.EmailFrom != "" && w.cfg.ResendAPIURL != ""
+	case "phone":
+		return w.cfg.PhoneWebhookURL != ""
+	default:
+		return false
+	}
+}
+
+// DeliverClaimed sends a job created with QueueImmediate. Provider failures are
+// retained in notification_jobs and scheduled for the normal retry worker.
+func (w *Worker) DeliverClaimed(ctx context.Context, id string) error {
+	var item job
+	var raw []byte
+	err := w.pool.QueryRow(ctx, `
+		select id::text, channel, destination, template_code, payload, attempts
+		from public.notification_jobs
+		where id = $1 and status = 'processing'`, id).Scan(
+		&item.ID, &item.Channel, &item.Destination, &item.Template, &raw, &item.Attempts,
+	)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, &item.Payload); err != nil {
+		item.Payload = map[string]any{}
+	}
+
+	deliveryErr := w.send(ctx, item)
+	if deliveryErr == nil {
+		_, err = w.pool.Exec(ctx, `
+			update public.notification_jobs
+			set status = 'sent', sent_at = now(), locked_at = null, last_error = null
+			where id = $1`, item.ID)
+		if err != nil {
+			w.log.Error("record immediate notification success", "job_id", item.ID, "error", err)
+		}
+		return nil
+	}
+
+	nextStatus := "pending"
+	if item.Attempts >= 5 {
+		nextStatus = "failed"
+	}
+	delayMinutes := 1 << min(max(item.Attempts-1, 0), 5)
+	if _, err := w.pool.Exec(ctx, `
+		update public.notification_jobs
+		set status = $2, next_attempt_at = now() + make_interval(mins => $3),
+		    locked_at = null, last_error = left($4, 2000)
+		where id = $1`, item.ID, nextStatus, delayMinutes, deliveryErr.Error()); err != nil {
+		w.log.Error("record immediate notification failure", "job_id", item.ID, "error", err)
+	}
+	w.log.Error("immediate notification delivery", "job_id", item.ID, "channel", item.Channel, "error", deliveryErr)
+	return deliveryErr
 }
 
 func (w *Worker) process(ctx context.Context) error {
@@ -167,7 +246,7 @@ func (w *Worker) sendEmail(ctx context.Context, item job) error {
 		"html":    body,
 	}
 	encoded, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.ResendAPIURL, bytes.NewReader(encoded))
 	if err != nil {
 		return err
 	}
