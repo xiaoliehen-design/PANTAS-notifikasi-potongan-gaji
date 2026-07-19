@@ -1,5 +1,10 @@
 "use strict";
 
+const TAB_SESSION_KEY = "pantas_tab_session";
+const TAB_ACTIVITY_KEY = "pantas_tab_last_activity";
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000;
+
 const state = {
   user: null,
   route: "dashboard",
@@ -7,6 +12,13 @@ const state = {
   units: null,
   unreadNotifications: 0,
   sidebarCollapsed: readSidebarPreference(),
+  tabToken: readTabToken(),
+  lastActivity: readLastActivity(),
+  idleTimer: null,
+  heartbeatTimer: null,
+  expiringSession: false,
+  routeVersion: 0,
+  routeController: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -17,6 +29,11 @@ document.addEventListener("DOMContentLoaded", boot);
 
 async function boot() {
   bindGlobalEvents();
+  if (!state.tabToken || !state.lastActivity || Date.now() - state.lastActivity >= IDLE_TIMEOUT_MS) {
+    clearTabSession();
+    showAuth();
+    return;
+  }
   try {
     const result = await api("/api/auth/me", { quiet: true });
     state.user = result.user;
@@ -31,12 +48,13 @@ function bindGlobalEvents() {
   $("#forgot-form").addEventListener("submit", forgotPassword);
   $("#reset-form").addEventListener("submit", resetPassword);
   $("#show-forgot").addEventListener("click", () => setAuthView("forgot"));
+  $("#refresh-captcha").addEventListener("click", refreshCaptcha);
   $$('[data-auth-back]').forEach(button => button.addEventListener("click", () => setAuthView("login")));
   $$(".password-toggle").forEach(button => button.addEventListener("click", () => {
     const input = button.closest(".password-wrap").querySelector("input");
     input.type = input.type === "password" ? "text" : "password";
   }));
-  $("#logout-button").addEventListener("click", logout);
+  $("#logout-button").addEventListener("click", () => logout());
   $("#menu-button").addEventListener("click", () => $("#sidebar").classList.toggle("open"));
   $("#sidebar-collapse-button").addEventListener("click", toggleSidebar);
   $("#notification-button").addEventListener("click", openNotifications);
@@ -45,6 +63,12 @@ function bindGlobalEvents() {
   $("#profile-button").addEventListener("click", () => navigate("profile"));
   $("#password-form").addEventListener("submit", changePassword);
   window.addEventListener("hashchange", renderRoute);
+  ["pointerdown", "keydown", "scroll", "touchstart"].forEach(name => document.addEventListener(name, recordActivity, { passive: true }));
+  document.addEventListener("visibilitychange", () => {
+    if (!state.user || document.visibilityState !== "visible") return;
+    if (Date.now() - state.lastActivity >= IDLE_TIMEOUT_MS) expireIdleSession();
+    else scheduleIdleLogout();
+  });
   window.addEventListener("resize", () => {
     applySidebarState();
     if (state.dashboard) drawHistoryChart(state.dashboard.history || []);
@@ -58,15 +82,22 @@ function bindGlobalEvents() {
 async function login(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  if (!form.checkValidity()) {
+    form.reportValidity();
+    return;
+  }
   const button = $("button[type=submit]", form);
   setBusy(button, true, "Memeriksa…");
   try {
     const data = await api("/api/auth/login", { method: "POST", body: formJSON(form), auth: false });
+    establishTabSession(data.tab_token);
     state.user = data.user;
     form.reset();
     showApp();
   } catch (error) {
     toast("Login gagal", error.message, "error");
+    refreshCaptcha();
+    if (error.code === "captcha_invalid") form.elements.captcha.focus();
   } finally {
     setBusy(button, false);
   }
@@ -128,14 +159,21 @@ async function changePassword(event) {
 async function logout() {
   try { await api("/api/auth/logout", { method: "POST" }); } catch {}
   state.user = null;
+  clearTabSession();
   showAuth();
 }
 
 function setAuthView(name) {
   ["login", "forgot", "reset"].forEach(view => $(`#${view}-view`).hidden = view !== name);
+  if (name === "login" && !$("#auth-shell").hidden) refreshCaptcha();
 }
 
 function showAuth() {
+  stopSessionTimers();
+  clearTabSession();
+  state.routeController?.abort();
+  state.routeController = null;
+  state.routeVersion += 1;
   $("#app-shell").hidden = true;
   $("#auth-shell").hidden = false;
   $("#sidebar").classList.remove("open");
@@ -156,12 +194,97 @@ function showApp() {
   $("#top-name").textContent = state.user.name.split(" ")[0];
   applySidebarState();
   buildNavigation();
+  startSessionTimers();
   if (state.user.must_change_password) {
     $("#password-dialog").showModal();
     return;
   }
-  if (!location.hash) location.hash = state.user.is_admin ? "#monitoring" : "#dashboard";
+  if (!location.hash) {
+    location.hash = state.user.is_admin ? "#monitoring" : "#dashboard";
+    return;
+  }
   renderRoute();
+}
+
+function refreshCaptcha() {
+  const image = $("#login-captcha-image");
+  if (!image) return;
+  image.src = `/api/auth/captcha?refresh=${Date.now()}`;
+  const input = $("#login-form")?.elements.captcha;
+  if (input) input.value = "";
+}
+
+function readTabToken() {
+  try { return sessionStorage.getItem(TAB_SESSION_KEY) || ""; }
+  catch { return ""; }
+}
+
+function readLastActivity() {
+  try { return Number(sessionStorage.getItem(TAB_ACTIVITY_KEY)) || 0; }
+  catch { return 0; }
+}
+
+function establishTabSession(token) {
+  state.tabToken = String(token || "");
+  state.lastActivity = Date.now();
+  try {
+    sessionStorage.setItem(TAB_SESSION_KEY, state.tabToken);
+    sessionStorage.setItem(TAB_ACTIVITY_KEY, String(state.lastActivity));
+  } catch {}
+}
+
+function clearTabSession() {
+  state.tabToken = "";
+  state.lastActivity = 0;
+  try {
+    sessionStorage.removeItem(TAB_SESSION_KEY);
+    sessionStorage.removeItem(TAB_ACTIVITY_KEY);
+  } catch {}
+}
+
+function recordActivity() {
+  if (!state.user || state.expiringSession) return;
+  const now = Date.now();
+  if (now - state.lastActivity < 1000) return;
+  state.lastActivity = now;
+  try { sessionStorage.setItem(TAB_ACTIVITY_KEY, String(now)); } catch {}
+  scheduleIdleLogout();
+}
+
+function startSessionTimers() {
+  state.lastActivity = readLastActivity() || Date.now();
+  try { sessionStorage.setItem(TAB_ACTIVITY_KEY, String(state.lastActivity)); } catch {}
+  scheduleIdleLogout();
+  clearInterval(state.heartbeatTimer);
+  state.heartbeatTimer = setInterval(async () => {
+    if (!state.user || Date.now() - state.lastActivity > HEARTBEAT_INTERVAL_MS * 2) return;
+    try { await api("/api/auth/me", { quiet: true }); } catch {}
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+function stopSessionTimers() {
+  clearTimeout(state.idleTimer);
+  clearInterval(state.heartbeatTimer);
+  state.idleTimer = null;
+  state.heartbeatTimer = null;
+}
+
+function scheduleIdleLogout() {
+  clearTimeout(state.idleTimer);
+  if (!state.user) return;
+  const remaining = Math.max(0, IDLE_TIMEOUT_MS - (Date.now() - state.lastActivity));
+  state.idleTimer = setTimeout(expireIdleSession, remaining);
+}
+
+async function expireIdleSession() {
+  if (!state.user || state.expiringSession) return;
+  state.expiringSession = true;
+  try { await api("/api/auth/logout", { method: "POST", quiet: true }); } catch {}
+  state.user = null;
+  clearTabSession();
+  showAuth();
+  state.expiringSession = false;
+  toast("Sesi berakhir", "Anda telah tidak aktif selama 30 menit. Silakan login kembali.", "error");
 }
 
 function readSidebarPreference() {
@@ -219,12 +342,47 @@ function buildNavigation() {
 
 function navigate(route, params = "") { location.hash = `#${route}${params}`; }
 
+function abortRenderError() {
+  const error = new Error("Navigasi halaman berubah");
+  error.name = "AbortError";
+  return error;
+}
+
+function isCurrentRouteContext(context) {
+  return Boolean(state.user && context?.signal) && !context.signal.aborted && state.routeVersion === context.version && state.route === context.route;
+}
+
+function ensureCurrentRoute(context) {
+  if (!isCurrentRouteContext(context)) throw abortRenderError();
+}
+
+function activeRouteContext(route) {
+  const context = { route, version: state.routeVersion, signal: state.routeController?.signal };
+  if (!context.signal) throw abortRenderError();
+  ensureCurrentRoute(context);
+  return context;
+}
+
+async function routeAPI(path, context, options = {}) {
+  ensureCurrentRoute(context);
+  const data = await api(path, { ...options, signal: context.signal });
+  ensureCurrentRoute(context);
+  return data;
+}
+
 async function renderRoute() {
   if (!state.user) return;
   const raw = location.hash.replace(/^#/, "") || "dashboard";
   const [route] = raw.split("?");
-  if (state.user.is_admin && ["dashboard", "history", "deductions", "appeals", "reviews"].includes(route)) return navigate("monitoring");
+  if (state.user.is_admin && ["dashboard", "history", "deductions", "appeals", "reviews"].includes(route)) {
+    state.routeController?.abort();
+    return navigate("monitoring");
+  }
+  state.routeController?.abort();
+  state.routeController = new AbortController();
+  state.routeVersion += 1;
   state.route = route;
+  const context = { route, version: state.routeVersion, signal: state.routeController.signal };
   $$(".nav-link").forEach(link => link.classList.toggle("active", link.dataset.route === route));
   const labels = {
     dashboard: ["Ringkasan pribadi", "Dashboard"], history: ["Analisis pribadi", "Riwayat Potongan"],
@@ -242,19 +400,20 @@ async function renderRoute() {
     const handlers = {
       dashboard: renderDashboard, history: renderHistory, deductions: renderDeductions,
       appeals: renderAppeals, profile: renderProfile, monitoring: renderMonitoring,
-      warnings: renderWarnings, reviews: () => renderReviews(false),
-      "admin-reviews": () => renderReviews(true), "admin-users": renderAdminUsers,
+      warnings: renderWarnings, reviews: context => renderReviews(false, context),
+      "admin-reviews": context => renderReviews(true, context), "admin-users": context => renderAdminUsers(1, context),
       "admin-imports": renderAdminImports, "admin-parameters": renderAdminParameters,
     };
     if (!handlers[route]) return navigate("dashboard");
-    await handlers[route]();
+    await handlers[route](context);
   } catch (error) {
+    if (error.name === "AbortError" || !isCurrentRouteContext(context)) return;
     page.innerHTML = errorState(error.message);
   }
 }
 
-async function renderDashboard() {
-  const [dashboard, historyData] = await Promise.all([api("/api/dashboard"), api("/api/history")]);
+async function renderDashboard(context = activeRouteContext("dashboard")) {
+  const [dashboard, historyData] = await Promise.all([routeAPI("/api/dashboard", context), routeAPI("/api/history", context)]);
   dashboard.history = historyData.points;
   state.dashboard = dashboard;
   updateNotificationBadge(dashboard.unread_notifications);
@@ -284,32 +443,32 @@ async function renderDashboard() {
     </section>
     <section class="panel section-top"><div class="panel-header"><div><h3>Detail potongan periode berjalan</h3><p>Hanya tanggal dengan potongan yang ditampilkan</p></div><button class="button button-small button-ghost" data-go="deductions">Lihat lengkap</button></div>${deductionTable(dashboard.deductions, 5)}</section>`;
   bindGoButtons();
-  requestAnimationFrame(() => drawHistoryChart(historyData.points));
+  requestAnimationFrame(() => { if (isCurrentRouteContext(context)) drawHistoryChart(historyData.points); });
 }
 
-async function renderHistory() {
+async function renderHistory(context = activeRouteContext("history")) {
   const query = new URLSearchParams(location.hash.split("?")[1] || "");
   const now = new Date();
   const to = query.get("to") || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
   const start = new Date(`${to}-01T00:00:00`); start.setMonth(start.getMonth()-11);
   const from = query.get("from") || `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,"0")}`;
-  const data = await api(`/api/history?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  const data = await routeAPI(`/api/history?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, context);
   page.innerHTML = `${pageIntro("Riwayat potongan", "Gunakan rentang bulan untuk melihat pola dalam periode tertentu.")}
     <section class="panel"><form id="history-filter" class="filter-bar"><label class="field"><span>Dari bulan</span><input type="month" name="from" value="${h(from)}" required></label><label class="field"><span>Sampai bulan</span><input type="month" name="to" value="${h(to)}" required></label><button class="button button-primary" type="submit">Terapkan</button></form><div class="panel-body"><div class="chart-wrap"><canvas id="history-chart"></canvas></div></div>${historyTable(data.points)}</section>`;
   $("#history-filter").addEventListener("submit", event => { event.preventDefault(); const values=formJSON(event.currentTarget); navigate("history", `?from=${values.from}&to=${values.to}`); });
-  requestAnimationFrame(() => drawHistoryChart(data.points));
+  requestAnimationFrame(() => { if (isCurrentRouteContext(context)) drawHistoryChart(data.points); });
 }
 
-async function renderDeductions() {
-  const data = await api("/api/deductions");
+async function renderDeductions(context = activeRouteContext("deductions")) {
+  const data = await routeAPI("/api/deductions", context);
   page.innerHTML = `${pageIntro("Detail potongan", "Setiap kode, jam presensi, dan status koreksi ditampilkan per tanggal.", `<button class="button button-secondary" data-go="appeals">Ajukan banding</button>`)}<section class="panel">${deductionTable(data.items)}</section>`;
   bindGoButtons();
 }
 
-async function renderMonitoring() {
+async function renderMonitoring(context = activeRouteContext("monitoring")) {
   const query = new URLSearchParams(location.hash.split("?")[1] || "");
   const unit = query.get("unit_id");
-  const data = await api(`/api/monitoring${unit ? `?unit_id=${encodeURIComponent(unit)}` : ""}`);
+  const data = await routeAPI(`/api/monitoring${unit ? `?unit_id=${encodeURIComponent(unit)}` : ""}`, context);
   if (!data.current_period) { page.innerHTML = emptyState("□","Belum ada periode","Monitoring aktif setelah data dipublikasikan."); return; }
   const back = unit ? `<button class="button button-ghost" data-monitor-back>← Kembali ke agregat</button>` : "";
   const content = data.mode === "people" ? peopleMonitoringTable(data.items) : aggregateMonitoringCards(data.items);
@@ -318,16 +477,16 @@ async function renderMonitoring() {
   $$('[data-monitor-unit]').forEach(button => button.addEventListener("click", () => navigate("monitoring", `?unit_id=${button.dataset.monitorUnit}`)));
 }
 
-async function renderWarnings() {
-  const data = await api("/api/warnings");
+async function renderWarnings(context = activeRouteContext("warnings")) {
+  const data = await routeAPI("/api/warnings", context);
   const individual = data.individual.length ? data.individual.map(warningCard).join("") : emptyState("✓", "Tidak ada peringatan individu", "Tidak ada pola yang memenuhi parameter saat ini.");
   const aggregate = data.aggregate.length ? data.aggregate.map(warningCard).join("") : emptyState("✓", "Tidak ada peringatan unit", "Rata-rata unit masih di bawah batas parameter.");
   page.innerHTML = `${pageIntro("Peringatan presensi", "Deteksi berbasis parameter membantu atasan memberi perhatian lebih dini.", data.period ? periodPill(data.period.label) : "")}
     <div class="grid content-grid"><section class="panel"><div class="panel-header"><div><h3>Anggota</h3><p>Anomali individu dan potongan berturut-turut</p></div><span class="status status-warning">${data.individual.length} peringatan</span></div><div class="panel-body card-list">${individual}</div></section><section class="panel"><div class="panel-header"><div><h3>Keseluruhan unit</h3><p>Lonjakan dan batas rata-rata</p></div></div><div class="panel-body card-list">${aggregate}</div></section></div>`;
 }
 
-async function renderAppeals() {
-  const [historyData, options] = await Promise.all([api("/api/appeals"), api("/api/appeals/options")]);
+async function renderAppeals(context = activeRouteContext("appeals")) {
+  const [historyData, options] = await Promise.all([routeAPI("/api/appeals", context), routeAPI("/api/appeals/options", context)]);
   const existing = historyData.items.length ? historyData.items.map(appealHistoryCard).join("") : `<div class="callout callout-info">Belum ada riwayat banding.</div>`;
   const form = options.days.length ? appealForm(options) : emptyState("◇", "Tidak ada hari yang dapat dibanding", "Hari tanpa potongan atau yang sudah pernah diajukan tidak ditampilkan.");
   page.innerHTML = `${pageIntro("Banding potongan", "Isi penjelasan terpisah untuk setiap tanggal. Dokumen bersifat opsional.")}
@@ -362,8 +521,8 @@ async function submitAppeal(event, options) {
   finally { setBusy(button, false); }
 }
 
-async function renderReviews(admin) {
-  const data = await api(admin ? "/api/reviews/admin" : "/api/reviews/supervisor");
+async function renderReviews(admin, context = activeRouteContext(admin ? "admin-reviews" : "reviews")) {
+  const data = await routeAPI(admin ? "/api/reviews/admin" : "/api/reviews/supervisor", context);
   const cards = data.items.length ? data.items.map(item => reviewCard(item, admin)).join("") : emptyState("✓", "Antrean kosong", admin ? "Belum ada banding yang menunggu keputusan administrator." : "Belum ada banding yang menunggu verifikasi Anda.");
   page.innerHTML = `${pageIntro(admin ? "Keputusan final" : "Verifikasi atasan", admin ? "Keputusan dapat menghapus atau menyesuaikan potongan efektif per hari." : "Periksa alasan dan dokumen setiap tanggal secara terpisah.")}<section class="review-grid">${cards}</section>`;
   $$('[data-review-submit]').forEach(button => button.addEventListener("click", () => submitReview(button, admin)));
@@ -390,14 +549,14 @@ async function submitReview(button, admin) {
   finally { setBusy(button, false); }
 }
 
-async function renderAdminUsers(pageNumber = 1) {
-  if (!state.units) state.units = (await api("/api/admin/units")).items;
-  const data = await api(`/api/admin/users?page=${pageNumber}&limit=50`);
+async function renderAdminUsers(pageNumber = 1, context = activeRouteContext("admin-users")) {
+  if (!state.units) state.units = (await routeAPI("/api/admin/units", context)).items;
+  const data = await routeAPI(`/api/admin/users?page=${pageNumber}&limit=50`, context);
   page.innerHTML = `${pageIntro("Kelola pengguna", "Tambah, pindahkan, nonaktifkan, atau reset password pegawai.", `<button class="button button-primary" data-new-user>+ Tambah pengguna</button>`)}
     <section class="panel"><form id="user-search" class="filter-bar"><label class="field grow"><span>Pencarian</span><input name="q" placeholder="Nama, NIP, atau unit"></label><button class="button button-secondary">Cari</button></form>${adminUserTable(data.items)}<div class="pagination"><button class="button button-small button-ghost" data-user-page="${Math.max(1,data.page-1)}" ${data.page<=1?"disabled":""}>Sebelumnya</button><span class="period-pill">${data.page} · ${numberID(data.total)} pengguna</span><button class="button button-small button-ghost" data-user-page="${data.page+1}" ${data.page*data.limit>=data.total?"disabled":""}>Berikutnya</button></div></section>`;
   $("[data-new-user]").addEventListener("click", () => openUserDialog(null));
-  $("#user-search").addEventListener("submit", async event => { event.preventDefault(); const q=event.currentTarget.elements.q.value; const result=await api(`/api/admin/users?q=${encodeURIComponent(q)}&limit=100`); $(".table-wrap").outerHTML=adminUserTable(result.items); bindUserActions(); });
-  $$('[data-user-page]').forEach(button => button.addEventListener("click", () => renderAdminUsers(Number(button.dataset.userPage))));
+  $("#user-search").addEventListener("submit", async event => { event.preventDefault(); const q=event.currentTarget.elements.q.value; const result=await routeAPI(`/api/admin/users?q=${encodeURIComponent(q)}&limit=100`,context); $(".table-wrap").outerHTML=adminUserTable(result.items); bindUserActions(); });
+  $$('[data-user-page]').forEach(button => button.addEventListener("click", () => renderAdminUsers(Number(button.dataset.userPage), context)));
   bindUserActions();
 }
 
@@ -426,8 +585,8 @@ function openUserDialog(user) {
   $("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);if(user)values.is_active=event.currentTarget.elements.is_active.checked;try{await api(user?`/api/admin/users/${user.id}`:"/api/admin/users",{method:user?"PATCH":"POST",body:values});dialog.close();dialog.remove();toast("Berhasil","Data pengguna disimpan.","success");await renderAdminUsers();}catch(error){toast("Belum tersimpan",error.message,"error");}});
 }
 
-async function renderAdminImports() {
-  const data = await api("/api/admin/imports");
+async function renderAdminImports(context = activeRouteContext("admin-imports")) {
+  const data = await routeAPI("/api/admin/imports", context);
   page.innerHTML = `${pageIntro("Import data bulanan", "PANTAS memvalidasi format, NIP, unit, periode, dan duplikasi sebelum publikasi.")}
     <div class="grid content-grid"><section class="panel"><div class="panel-header"><div><h3>Unggah workbook</h3><p>Format harus sama dengan Upload dokumen.xlsx</p></div></div><div class="panel-body"><label class="import-drop"><input id="import-file" type="file" accept=".xlsx"><div><div class="empty-icon">⇧</div><h3>Pilih atau seret file Excel</h3><p>Maksimum 20 MB · sheet DETAIL WFH WFO</p></div></label><div id="import-preview"></div></div></section><section class="panel"><div class="panel-header"><div><h3>Riwayat import</h3><p>Versi draft dan publikasi</p></div></div><div class="panel-body card-list">${data.items.length?data.items.map(importCard).join(""):emptyState("□","Belum ada import","")}</div></section></div>`;
   $("#import-file").addEventListener("change", event => previewImport(event.target.files[0]));
@@ -443,12 +602,12 @@ async function previewImport(file) {
 }
 
 function bindImportActions(){
-  $$('[data-publish-import]').forEach(button=>button.addEventListener("click",async()=>{if(!await confirmAction("Publikasikan periode?","Dashboard seluruh pengguna akan berubah dan email dijadwalkan."))return;setBusy(button,true,"Menerbitkan…");try{const data=await api(`/api/admin/imports/${button.dataset.publishImport}/publish`,{method:"POST"});toast("Data dipublikasikan",data.message,"success");await renderAdminImports();}catch(error){toast("Gagal publikasi",error.message,"error");}finally{setBusy(button,false);}}));
+  $$('[data-publish-import]').forEach(button=>button.addEventListener("click",async()=>{if(!await confirmAction("Publikasikan periode?","Dashboard seluruh pengguna akan berubah. Email dan SMS dijadwalkan untuk kontak yang telah terverifikasi."))return;setBusy(button,true,"Menerbitkan…");try{const data=await api(`/api/admin/imports/${button.dataset.publishImport}/publish`,{method:"POST"});toast("Data dipublikasikan",data.message,"success");await renderAdminImports();}catch(error){toast("Gagal publikasi",error.message,"error");}finally{setBusy(button,false);}}));
   $$('[data-reject-import]').forEach(button=>button.addEventListener("click",async()=>{if(!await confirmAction("Batalkan draft?","Data staging pada draft tidak akan dipublikasikan.",true))return;await api(`/api/admin/imports/${button.dataset.rejectImport}`,{method:"DELETE"});await renderAdminImports();}));
 }
 
-async function renderAdminParameters() {
-  const [parameters,rules,reasons]=await Promise.all([api("/api/admin/parameters"),api("/api/admin/rules"),api("/api/admin/reasons")]);
+async function renderAdminParameters(context = activeRouteContext("admin-parameters")) {
+  const [parameters,rules,reasons]=await Promise.all([routeAPI("/api/admin/parameters",context),routeAPI("/api/admin/rules",context),routeAPI("/api/admin/reasons",context)]);
   page.innerHTML=`${pageIntro("Parameter sistem","Perubahan hanya dapat dilakukan administrator dan dicatat pada audit trail.")}
     <section class="panel"><div class="panel-header"><div><h3>Deteksi peringatan & dashboard</h3><p>Persentase disimpan sebagai nilai 0 sampai 1</p></div></div><div class="panel-body settings-grid">${parameters.items.map(parameterCard).join("")}</div></section>
     <section class="panel section-top"><div class="panel-header"><div><h3>Aturan potongan</h3><p>Tarif digunakan saat import berikutnya</p></div><button class="button button-small button-primary" data-add-rule>+ Tambah aturan</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Sumber</th><th>Kode</th><th>Label</th><th>Tarif</th><th>Aktif</th><th></th></tr></thead><tbody>${rules.items.map(ruleRow).join("")}</tbody></table></div></section>
@@ -493,7 +652,8 @@ function openRuleDialog(){
 
 function openReasonDialog(reason){const dialog=dynamicDialog(`${reason?"Ubah":"Tambah"} kategori alasan`,`<form class="stack-lg">${!reason?`<label class="field"><span>Kode</span><input name="code" pattern="[a-z0-9_]+" required></label>`:""}<label class="field"><span>Label</span><input name="label" value="${h(reason?.label||"")}" required></label><label class="field"><span>Deskripsi</span><textarea name="description">${h(reason?.description||"")}</textarea></label><label class="field"><span>Urutan</span><input name="sort_order" type="number" value="${reason?.sort_order||0}"></label>${reason?`<label class="check-row"><input name="is_active" type="checkbox" ${reason.is_active?"checked":""}> Aktif</label>`:""}<button class="button button-primary">Simpan</button></form>`);$("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);values.sort_order=Number(values.sort_order);if(reason)values.is_active=event.currentTarget.elements.is_active.checked;try{await api(reason?`/api/admin/reasons/${reason.id}`:"/api/admin/reasons",{method:reason?"PATCH":"POST",body:values});dialog.close();dialog.remove();await renderAdminParameters();}catch(error){toast("Belum tersimpan",error.message,"error");}});}
 
-async function renderProfile(){
+async function renderProfile(context = activeRouteContext("profile")){
+  ensureCurrentRoute(context);
   if(state.user.is_admin){
     page.innerHTML=`${pageIntro("Profil & keamanan","Administrator adalah akun sistem yang terpisah dari data pegawai.")}
       <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>@${h(state.user.username)}</p><span class="status status-active">Administrator Sistem</span></section><section class="panel"><div class="panel-header"><div><h3>Keamanan akun</h3><p>Username admin tidak menggunakan NIP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Password</strong><small>Gunakan password unik dan ganti secara berkala.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
@@ -599,7 +759,36 @@ async function openNotifications(){
 }
 function closeNotifications(){$("#notification-drawer").hidden=true;$("#drawer-backdrop").hidden=true;}
 
-async function revealDocuments(button){const target=button.parentElement.querySelector("[data-document-list]");if(!target)return;try{const data=await api(`/api/appeals/items/${button.dataset.documents}/documents`);target.innerHTML=data.items.length?data.items.map(item=>`<a class="button button-small button-ghost" href="/api/documents/${item.id}" target="_blank" rel="noopener">${h(item.filename)} · ${fileSize(item.size)}</a>`).join(""):"<small>Tidak ada dokumen.</small>";}catch(error){toast("Dokumen belum dapat dibuka",error.message,"error");}}
+async function revealDocuments(button){const target=button.parentElement.querySelector("[data-document-list]");if(!target)return;try{const data=await api(`/api/appeals/items/${button.dataset.documents}/documents`);target.innerHTML=data.items.length?data.items.map(item=>`<button class="button button-small button-ghost" type="button" data-download-document="${item.id}" data-filename="${h(item.filename)}">${h(item.filename)} · ${fileSize(item.size)}</button>`).join(""):"<small>Tidak ada dokumen.</small>";$$('[data-download-document]',target).forEach(item=>item.addEventListener("click",()=>downloadDocument(item)));}catch(error){toast("Dokumen belum dapat dibuka",error.message,"error");}}
+
+async function downloadDocument(button){
+  const tabToken=state.tabToken||readTabToken();
+  const headers={Accept:"application/pdf,image/jpeg,image/png"};
+  if(tabToken)headers["X-PANTAS-Tab-Token"]=tabToken;
+  setBusy(button,true,"Mengunduh…");
+  try{
+    const response=await fetch(`/api/documents/${encodeURIComponent(button.dataset.downloadDocument)}`,{headers,credentials:"same-origin"});
+    if(!response.ok){
+      const type=response.headers.get("content-type")||"";
+      const data=type.includes("application/json")?await response.json():null;
+      const code=data?.error?.code;
+      if(response.status===401&&code==="unauthenticated"){state.user=null;clearTabSession();showAuth();}
+      const error=new Error(data?.error?.message||`Dokumen gagal diunduh (${response.status})`);
+      error.code=code;
+      throw error;
+    }
+    const blob=await response.blob();
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    link.href=url;
+    link.download=button.dataset.filename||"dokumen";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(error){toast("Dokumen belum dapat diunduh",error.message,"error");}
+  finally{if(button.isConnected)setBusy(button,false);}
+}
 
 function drawHistoryChart(points){
   const canvas=$("#history-chart");if(!canvas)return;const rect=canvas.getBoundingClientRect();const dpr=window.devicePixelRatio||1;canvas.width=Math.max(300,rect.width*dpr);canvas.height=265*dpr;const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);const width=rect.width,height=265,pad={l:44,r:18,t:18,b:42};ctx.clearRect(0,0,width,height);if(!points.length){ctx.fillStyle="#708399";ctx.font="12px system-ui";ctx.textAlign="center";ctx.fillText("Belum ada riwayat",width/2,height/2);return;}const maxRate=Math.max(.01,...points.map(p=>Math.max(p.original,p.effective)));const niceMax=Math.ceil(maxRate*100/2)*2/100;ctx.strokeStyle="#e5ebf0";ctx.lineWidth=1;ctx.fillStyle="#708399";ctx.font="10px system-ui";ctx.textAlign="right";for(let i=0;i<=4;i++){const y=pad.t+(height-pad.t-pad.b)*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(width-pad.r,y);ctx.stroke();ctx.fillText(percent(niceMax*(1-i/4)),pad.l-7,y+3);}const x=i=>points.length===1?(pad.l+width-pad.r)/2:pad.l+(width-pad.l-pad.r)*i/(points.length-1);const y=value=>pad.t+(height-pad.t-pad.b)*(1-value/niceMax);const series=(key,color)=>{ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.lineJoin="round";ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(x(i),y(p[key])):ctx.moveTo(x(i),y(p[key])));ctx.stroke();points.forEach((p,i)=>{ctx.fillStyle="#fff";ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x(i),y(p[key]),3.5,0,Math.PI*2);ctx.fill();ctx.stroke();});};series("original","#c97822");series("effective","#1479bf");ctx.fillStyle="#708399";ctx.textAlign="center";points.forEach((p,i)=>{if(points.length<=12||i%Math.ceil(points.length/12)===0)ctx.fillText(shortMonth(p.label),x(i),height-17);});ctx.textAlign="left";ctx.fillStyle="#c97822";ctx.fillRect(pad.l,2,10,3);ctx.fillStyle="#40556b";ctx.fillText("Awal",pad.l+15,7);ctx.fillStyle="#1479bf";ctx.fillRect(pad.l+60,2,10,3);ctx.fillStyle="#40556b";ctx.fillText("Efektif",pad.l+75,7);
@@ -639,17 +828,21 @@ async function api(path, options={}) {
   const headers={Accept:"application/json",...(options.headers||{})};
   let body=options.rawBody;
   if(options.body!==undefined){headers["Content-Type"]="application/json";body=JSON.stringify(options.body);}
-  if(options.auth!==false && !["GET","HEAD"].includes(options.method||"GET")){const csrf=getCookie("pantas_csrf");if(csrf)headers["X-CSRF-Token"]=csrf;}
-  const response=await fetch(path,{method:options.method||"GET",headers,body,credentials:"same-origin"});
+  if(options.auth!==false){
+    const tabToken=state.tabToken||readTabToken();
+    if(tabToken)headers["X-PANTAS-Tab-Token"]=tabToken;
+    if(!["GET","HEAD"].includes(options.method||"GET")){const csrf=getCookie("pantas_csrf");if(csrf)headers["X-CSRF-Token"]=csrf;}
+  }
+  const response=await fetch(path,{method:options.method||"GET",headers,body,credentials:"same-origin",signal:options.signal});
   if(response.status===204)return null;
   const type=response.headers.get("content-type")||"";const data=type.includes("application/json")?await response.json():null;
-  if(!response.ok){const code=data?.error?.code;if(response.status===401&&code==="unauthenticated"&&options.auth!==false){state.user=null;showAuth();}if(response.status===428&&state.user){$("#password-dialog").showModal();}const error=new Error(data?.error?.message||`Permintaan gagal (${response.status})`);error.code=code;error.data=data;throw error;}
+  if(!response.ok){const code=data?.error?.code;if(response.status===401&&code==="unauthenticated"&&options.auth!==false){state.user=null;clearTabSession();showAuth();}if(response.status===428&&state.user){$("#password-dialog").showModal();}const error=new Error(data?.error?.message||`Permintaan gagal (${response.status})`);error.code=code;error.data=data;throw error;}
   return data;
 }
 
 function dynamicDialog(title,content){const dialog=document.createElement("dialog");dialog.className="modal";dialog.innerHTML=`<div class="modal-card"><div class="data-card-header"><h2>${h(title)}</h2><button class="icon-button" type="button" data-close>×</button></div>${content}</div>`;document.body.append(dialog);$("[data-close]",dialog).addEventListener("click",()=>{dialog.close();dialog.remove();});dialog.addEventListener("cancel",()=>setTimeout(()=>dialog.remove(),0));dialog.showModal();return dialog;}
 function confirmAction(title,message,danger=false){return new Promise(resolve=>{const dialog=$("#confirm-dialog");$("#confirm-title").textContent=title;$("#confirm-message").textContent=message;$("#confirm-accept").className=`button ${danger?"button-danger":"button-primary"}`;dialog.addEventListener("close",()=>resolve(dialog.returnValue==="confirm"),{once:true});dialog.showModal();});}
-function toast(title,message,type="success"){const element=document.createElement("div");element.className=`toast toast-${type}`;element.innerHTML=`<span>${type==="success"?"✓":"!"}</span><div><strong>${h(title)}</strong><p>${h(message)}</p></div>`;$("#toast-region").append(element);setTimeout(()=>element.remove(),5500);}
+function toast(title,message,type="success"){const key=`${type}|${title}|${message}`;$$('.toast').find(item=>item.dataset.toastKey===key)?.remove();const element=document.createElement("div");element.className=`toast toast-${type}`;element.dataset.toastKey=key;element.innerHTML=`<span>${type==="success"?"✓":"!"}</span><div><strong>${h(title)}</strong><p>${h(message)}</p></div>`;$("#toast-region").append(element);setTimeout(()=>element.remove(),5500);}
 function setBusy(button,busy,label){if(!button)return;if(busy){button.dataset.original=button.innerHTML;button.disabled=true;button.textContent=label||"Memproses…";}else{button.disabled=false;if(button.dataset.original)button.innerHTML=button.dataset.original;}}
 function formJSON(form){return Object.fromEntries(new FormData(form).entries());}
 function getCookie(name){return document.cookie.split("; ").find(row=>row.startsWith(`${name}=`))?.split("=").slice(1).join("=")||"";}

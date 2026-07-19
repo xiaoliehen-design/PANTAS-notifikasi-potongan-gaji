@@ -126,11 +126,27 @@ func TestSMTPMessageContainsSafeMIMEHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(message)
-	for _, expected := range []string{"From: PANTAS <pantas@example.com>", "To: <pegawai@example.com>", "Content-Type: text/html", "123456"} {
-		if !strings.Contains(text, expected) {
-			t.Errorf("SMTP message does not contain %q", expected)
-		}
+	parsed, err := mail.ReadMessage(strings.NewReader(string(message)))
+	if err != nil {
+		t.Fatalf("parse SMTP message: %v", err)
+	}
+	parsedFrom, err := mail.ParseAddress(parsed.Header.Get("From"))
+	if err != nil || parsedFrom.Name != "PANTAS" || parsedFrom.Address != "pantas@example.com" {
+		t.Fatalf("From header = %q, parsed=%#v, error=%v", parsed.Header.Get("From"), parsedFrom, err)
+	}
+	parsedTo, err := mail.ParseAddress(parsed.Header.Get("To"))
+	if err != nil || parsedTo.Address != "pegawai@example.com" {
+		t.Fatalf("To header = %q, parsed=%#v, error=%v", parsed.Header.Get("To"), parsedTo, err)
+	}
+	if !strings.HasPrefix(parsed.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", parsed.Header.Get("Content-Type"))
+	}
+	body, err := io.ReadAll(parsed.Body)
+	if err != nil {
+		t.Fatalf("read SMTP body: %v", err)
+	}
+	if !strings.Contains(string(body), "123456") {
+		t.Fatalf("SMTP body does not contain OTP: %q", string(body))
 	}
 }
 
@@ -170,6 +186,32 @@ func TestSendPhoneUsesTwilio(t *testing.T) {
 	}
 	if receivedTo != "+6281234567890" || receivedService == "" || !strings.Contains(receivedBody, "123456") {
 		t.Fatalf("unexpected Twilio form: to=%q service=%q body=%q", receivedTo, receivedService, receivedBody)
+	}
+}
+
+func TestPeriodPublishedTemplatesContainPeriodAndSafeLink(t *testing.T) {
+	payload := map[string]any{"name": "Pegawai PANTAS", "period": "Juli 2026"}
+	appURL := "https://pantas-notifikasi-potongan-gaji.onrender.com"
+	subject, emailBody := renderTemplate("period_published", payload, appURL)
+	phoneBody := renderPhoneTemplate("period_published", payload, appURL)
+
+	for label, text := range map[string]string{
+		"subject": subject,
+		"email":   emailBody,
+		"phone":   phoneBody,
+	} {
+		if !strings.Contains(text, "Juli 2026") {
+			t.Errorf("%s template does not contain period: %q", label, text)
+		}
+	}
+	if !strings.Contains(emailBody, appURL) || !strings.Contains(phoneBody, appURL) {
+		t.Fatal("period-published templates do not contain the configured application URL")
+	}
+	if strings.Contains(phoneBody, "<") || strings.Contains(phoneBody, ">") {
+		t.Fatalf("phone template contains HTML: %q", phoneBody)
+	}
+	if len(phoneBody) > 160 {
+		t.Fatalf("phone template length = %d, want at most one GSM-7 SMS segment", len(phoneBody))
 	}
 }
 

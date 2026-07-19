@@ -525,18 +525,23 @@ func renderTemplate(code string, payload map[string]any, appURL string) (string,
 		return "Banding PANTAS menunggu verifikasi", fmt.Sprintf("Banding periode %s telah diajukan dan menunggu verifikasi. Buka <a href=\"%s\">PANTAS</a> untuk melihat detail.", period, link)
 	case "appeal_reviewed":
 		return "Status banding PANTAS diperbarui", fmt.Sprintf("Status banding periode %s telah diperbarui. Buka <a href=\"%s\">PANTAS</a> untuk melihat hasilnya.", period, link)
+	case "period_published":
+		return fmt.Sprintf("Data potongan PANTAS periode %s tersedia", period), fmt.Sprintf("Halo %s, data presensi dan potongan periode %s telah tersedia. Demi privasi, rincian hanya dapat dilihat setelah login di <a href=\"%s\">PANTAS</a>.", name, period, link)
 	default:
-		return "Data potongan PANTAS telah diperbarui", fmt.Sprintf("Halo %s, data presensi dan potongan periode %s telah tersedia. Demi privasi, detail hanya dapat dilihat setelah login di <a href=\"%s\">PANTAS</a>.", name, period, link)
+		return "Notifikasi PANTAS", fmt.Sprintf("Halo %s, Anda memiliki notifikasi baru. Buka <a href=\"%s\">PANTAS</a> untuk melihat rincian.", name, link)
 	}
 }
 
 func renderPhoneTemplate(code string, payload map[string]any, appURL string) string {
 	otp := value(payload, "otp", "")
+	period := value(payload, "period", "periode terbaru")
 	switch code {
 	case "password_otp":
 		return fmt.Sprintf("PANTAS: kode reset password %s. Berlaku 10 menit. Jangan bagikan kode ini.", otp)
 	case "contact_otp":
 		return fmt.Sprintf("PANTAS: kode verifikasi nomor HP %s. Berlaku 10 menit. Jangan bagikan kode ini.", otp)
+	case "period_published":
+		return fmt.Sprintf("PANTAS: Data potongan periode %s tersedia. Login untuk melihat rincian: %s", period, appURL)
 	default:
 		_, body := renderTemplate(code, payload, appURL)
 		return stripHTML(body)

@@ -208,11 +208,7 @@ func (s *Service) Publish(ctx context.Context, actor auth.Principal, batchID, ip
 		from public.users where is_active and deleted_at is null`, label); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		insert into public.notification_jobs (user_id, channel, destination, template_code, payload)
-		select id, 'email', email, 'period_published', jsonb_build_object('name', name, 'period', $1)
-		from public.users
-		where is_active and deleted_at is null and email is not null and email_verified_at is not null`, label); err != nil {
+	if err := queuePublishedPeriodJobs(ctx, tx, label, batchID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

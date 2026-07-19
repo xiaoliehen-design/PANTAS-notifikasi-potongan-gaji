@@ -1,4 +1,4 @@
-# Pengaturan Email dan OTP Nomor HP
+# Pengaturan Email dan Notifikasi Nomor HP
 
 Panduan ini menggunakan URL aplikasi:
 
@@ -52,7 +52,7 @@ Jika muncul `Password PANTAS salah`, backend belum mencoba mengirim email. Jika 
 
 ## B. SMS nomor HP melalui Twilio
 
-Twilio tidak memerlukan domain web. Namun, SMS bersifat berbayar setelah trial dan ketersediaan pengirim dapat bergantung pada negara/operator.
+Twilio tidak memerlukan domain web. Kanal ini dipakai untuk OTP verifikasi nomor HP sekaligus notifikasi saat admin mempublikasikan periode. Namun, SMS bersifat berbayar setelah trial dan ketersediaan pengirim dapat bergantung pada negara/operator.
 
 ### 1. Siapkan Twilio
 
@@ -102,7 +102,19 @@ Nomor `TWILIO_FROM_NUMBER` harus merupakan nomor milik akun Twilio, bukan nomor 
 
 Pada akun Twilio trial, nomor tujuan harus diverifikasi lebih dahulu. Untuk seluruh pegawai, upgrade akun dan pastikan sender/messaging service dapat mengirim ke Indonesia.
 
-## C. Webhook internal sebagai alternatif
+## C. Notifikasi saat admin mempublikasikan periode
+
+Publikasi yang berhasil dilakukan dalam satu transaksi database. Setelah batch aktif:
+
+1. setiap pegawai aktif memperoleh notifikasi dalam aplikasi;
+2. pegawai dengan `email_verified_at` memperoleh job email;
+3. pegawai dengan `phone_verified_at` memperoleh job SMS;
+4. pegawai yang mempunyai kedua kontak memperoleh email dan SMS;
+5. email atau nomor yang belum terverifikasi tidak digunakan.
+
+Email dan SMS hanya menyatakan bahwa data periode tersedia. Nilai atau rincian potongan tidak dicantumkan dan hanya dapat dilihat setelah login ke PANTAS. Upload yang baru berstatus draft tidak mengirim notifikasi; pengiriman baru dijadwalkan setelah admin menekan **Publikasikan**.
+
+## D. Webhook internal sebagai alternatif
 
 Jika kantor memiliki gateway SMS/WhatsApp sendiri, gunakan:
 
@@ -124,7 +136,9 @@ PANTAS mengirim JSON:
 
 Gateway harus mengembalikan HTTP 2xx hanya setelah permintaan pengiriman diterima.
 
-## D. Diagnosis database
+Webhook yang dipakai untuk notifikasi periode harus menerima `template` bernilai `period_published`, selain `contact_otp`.
+
+## E. Diagnosis database
 
 Jalankan di Supabase SQL Editor tanpa memilih kolom `payload`, karena payload berisi OTP:
 

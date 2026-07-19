@@ -73,7 +73,7 @@ services:
       - key: SESSION_TTL
         value: 12h
       - key: SESSION_IDLE_TTL
-        value: 2h
+        value: 30m
       - key: MAX_EXCEL_BYTES
         value: "20971520"
       - key: MAX_DOCUMENT_BYTES

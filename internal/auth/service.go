@@ -36,8 +36,10 @@ var (
 )
 
 const (
-	SessionCookieName = "pantas_session"
-	CSRFCookieName    = "pantas_csrf"
+	SessionCookieName  = "pantas_session"
+	CSRFCookieName     = "pantas_csrf"
+	TabProofCookieName = "pantas_tab_proof"
+	TabTokenHeader     = "X-PANTAS-Tab-Token"
 )
 
 type Principal struct {
@@ -78,6 +80,7 @@ type LoginResult struct {
 	Principal    Principal
 	SessionToken string
 	CSRFToken    string
+	TabToken     string
 }
 
 type ContactInputError struct {
@@ -185,6 +188,10 @@ func (s *Service) Login(ctx context.Context, identifier, password, ip, userAgent
 	if err != nil {
 		return LoginResult{}, err
 	}
+	tabToken, _, err := randomToken(32)
+	if err != nil {
+		return LoginResult{}, err
+	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -214,10 +221,13 @@ func (s *Service) Login(ctx context.Context, identifier, password, ip, userAgent
 	if err := tx.Commit(ctx); err != nil {
 		return LoginResult{}, err
 	}
-	return LoginResult{Principal: principal, SessionToken: sessionToken, CSRFToken: csrfToken}, nil
+	return LoginResult{Principal: principal, SessionToken: sessionToken, CSRFToken: csrfToken, TabToken: tabToken}, nil
 }
 
 func (s *Service) AuthenticateRequest(ctx context.Context, request *http.Request) (Principal, Session, error) {
+	if !s.verifyTabSession(request) {
+		return Principal{}, Session{}, ErrUnauthenticated
+	}
 	cookie, err := request.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return Principal{}, Session{}, ErrUnauthenticated
@@ -563,24 +573,54 @@ func (s *Service) VerifyContactChange(ctx context.Context, principal Principal, 
 }
 
 func (s *Service) SetCookies(response http.ResponseWriter, result LoginResult) {
-	maxAge := int(s.cfg.SessionTTL.Seconds())
 	http.SetCookie(response, &http.Cookie{
-		Name: SessionCookieName, Value: result.SessionToken, Path: "/", MaxAge: maxAge,
+		Name: SessionCookieName, Value: result.SessionToken, Path: "/",
 		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(response, &http.Cookie{
-		Name: CSRFCookieName, Value: result.CSRFToken, Path: "/", MaxAge: maxAge,
+		Name: CSRFCookieName, Value: result.CSRFToken, Path: "/",
 		HttpOnly: false, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(response, &http.Cookie{
+		Name: TabProofCookieName, Value: s.tabProof(result.TabToken), Path: "/",
+		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
 	})
 }
 
 func (s *Service) ClearCookies(response http.ResponseWriter) {
-	for _, name := range []string{SessionCookieName, CSRFCookieName} {
+	for _, name := range []string{SessionCookieName, CSRFCookieName, TabProofCookieName} {
 		http.SetCookie(response, &http.Cookie{
 			Name: name, Value: "", Path: "/", MaxAge: -1, Expires: time.Unix(1, 0),
-			HttpOnly: name == SessionCookieName, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
+			HttpOnly: name != CSRFCookieName, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
 		})
 	}
+}
+
+func (s *Service) tabProof(tabToken string) string {
+	raw, err := base64.RawURLEncoding.DecodeString(tabToken)
+	if err != nil || len(raw) != 32 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(s.cfg.AppSecret))
+	mac.Write([]byte("pantas-tab-session|"))
+	mac.Write(raw)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Service) verifyTabSession(request *http.Request) bool {
+	tabToken := strings.TrimSpace(request.Header.Get(TabTokenHeader))
+	if tabToken == "" {
+		return false
+	}
+	proofCookie, err := request.Cookie(TabProofCookieName)
+	if err != nil || proofCookie.Value == "" {
+		return false
+	}
+	expected := s.tabProof(tabToken)
+	if expected == "" || len(expected) != len(proofCookie.Value) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(proofCookie.Value)) == 1
 }
 
 func ValidatePassword(password, loginIdentifier string) error {

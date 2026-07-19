@@ -56,6 +56,7 @@ func New(pool *pgxpool.Pool, cfg config.Config, authService *auth.Service, impor
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
+	mux.HandleFunc("GET /api/auth/captcha", a.captcha)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/auth/forgot-password", a.forgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", a.resetPassword)

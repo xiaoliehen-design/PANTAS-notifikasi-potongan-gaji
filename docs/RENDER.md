@@ -39,7 +39,7 @@ Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak meme
 | `SMTP_PASSWORD` | kosong | App Password Google 16 karakter |
 | `SMTP_TLS_MODE` | `starttls` | Gunakan `starttls` untuk port 587; `implicit` untuk port 465 |
 | `RESEND_API_URL` | `https://api.resend.com/emails` | Endpoint alternatif Resend |
-| `PHONE_PROVIDER` | `auto` | Pilih `twilio` atau `webhook` saat kanal nomor HP diaktifkan |
+| `PHONE_PROVIDER` | `auto` | Pilih `twilio` atau `webhook` untuk OTP nomor HP dan notifikasi publikasi melalui SMS |
 | `TWILIO_ACCOUNT_SID` | kosong | Account SID Twilio |
 | `TWILIO_API_KEY` / `TWILIO_API_SECRET` | kosong | Kredensial yang dianjurkan untuk produksi |
 | `TWILIO_AUTH_TOKEN` | kosong | Alternatif untuk uji coba; jangan dipublikasikan |
@@ -49,7 +49,7 @@ Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak meme
 | `TRUST_PROXY` | `true` | Memakai IP pertama `X-Forwarded-For` dari Render |
 | `COOKIE_SECURE` | `true` | Wajib `true` pada HTTPS produksi |
 | `SESSION_TTL` | `12h` | Masa maksimum sesi |
-| `SESSION_IDLE_TTL` | `2h` | Batas tidak aktif |
+| `SESSION_IDLE_TTL` | `30m` | Batas tidak aktif sebelum wajib login kembali |
 | `MAX_EXCEL_BYTES` | `20971520` | 20 MB |
 | `MAX_DOCUMENT_BYTES` | `5242880` | 5 MB |
 | `WORKER_INTERVAL` | `5s` | Interval worker notifikasi |
@@ -104,13 +104,13 @@ SMTP_PASSWORD=app-password-16-karakter
 SMTP_TLS_MODE=starttls
 ```
 
-Jangan mengisi `SMTP_PASSWORD` dengan password login Gmail. Jangan menaruh App Password di GitHub. Jika `RESEND_API_KEY` lama masih tersimpan, nilai tersebut boleh tetap ada selama `EMAIL_PROVIDER` diisi `smtp`.
+Jangan mengisi `SMTP_PASSWORD` dengan password login Gmail. Jangan menaruh App Password di GitHub. Masukkan `EMAIL_FROM` tanpa tanda kutip pembuka/penutup dan gunakan key `SMTP_TLS_MODE` (bukan `SMTP_TLS`). Versi ini tetap menormalisasi format lama agar deployment yang sudah ada tidak langsung gagal. Jika `RESEND_API_KEY` lama masih tersimpan, nilai tersebut boleh tetap ada selama `EMAIL_PROVIDER` diisi `smtp`.
 
 PANTAS meminta provider menerima OTP sebelum formulir kode ditampilkan. Kegagalan dicatat pada `notification_jobs` dan pengguna tetap berada di halaman yang sama. Pesan "Password PANTAS salah" berarti pengiriman belum dicoba karena password yang dimasukkan berbeda dari password login PANTAS.
 
 ## SMS nomor HP melalui Twilio
 
-Set `PHONE_PROVIDER=twilio`, lalu isi Account SID, API key/secret, serta Messaging Service SID atau nomor pengirim Twilio. Nomor tujuan PANTAS dinormalisasi menjadi format `+62...`.
+Set `PHONE_PROVIDER=twilio`, lalu isi Account SID, API key/secret, serta Messaging Service SID atau nomor pengirim Twilio. Kanal yang sama dipakai untuk OTP nomor HP dan notifikasi periode yang dipublikasikan. Nomor tujuan PANTAS dinormalisasi menjadi format `+62...`.
 
 ```env
 PHONE_PROVIDER=twilio
@@ -131,8 +131,8 @@ Jika diaktifkan, PANTAS mengirim `POST` JSON:
 ```json
 {
   "to": "+628123456789",
-  "message": "pesan OTP yang sudah menjadi teks biasa",
-  "template": "contact_otp"
+  "message": "pesan OTP atau notifikasi yang sudah menjadi teks biasa",
+  "template": "contact_otp atau period_published"
 }
 ```
 
@@ -144,7 +144,7 @@ Header `Authorization: Bearer <PHONE_OTP_WEBHOOK_TOKEN>` ditambahkan bila token 
 - **Database unavailable:** pastikan password benar, connection string memakai pooler port 5432, dan `sslmode=require`.
 - **Health check 503:** migration belum selesai atau database tidak dapat dijangkau.
 - **Dokumen gagal upload:** cek bucket, `SUPABASE_URL`, dan service-role key.
-- **Email berstatus failed:** untuk Gmail cek `EMAIL_PROVIDER`, alamat akun, App Password, dan `last_error`; untuk Resend cek API key/domain.
+- **Email berstatus failed:** untuk Gmail cek `EMAIL_PROVIDER`, pastikan `EMAIL_FROM` tidak dibungkus tanda kutip, alamat pengirim sama dengan `SMTP_USERNAME`, App Password berisi tepat 16 karakter tanpa spasi, key TLS bernama `SMTP_TLS_MODE`, lalu periksa `last_error`; untuk Resend cek API key/domain.
 - **OTP email tidak masuk walau status sent:** periksa folder spam dan aktivitas akun/provider. Status `sent` berarti provider menerima permintaan, bukan jaminan inbox.
-- **OTP nomor HP tidak terkirim:** untuk Twilio cek Messaging Logs dan pastikan akun trial sudah memverifikasi nomor tujuan; untuk webhook pastikan endpoint mengembalikan HTTP 2xx.
+- **OTP/notifikasi nomor HP tidak terkirim:** untuk Twilio cek Messaging Logs dan pastikan akun trial sudah memverifikasi nomor tujuan; untuk webhook pastikan endpoint menerima `contact_otp` serta `period_published` dan mengembalikan HTTP 2xx.
 - **403 invalid_origin:** nilai `APP_URL` tidak sama dengan origin URL yang dibuka pengguna.

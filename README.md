@@ -9,6 +9,7 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 ## Fitur
 
 - Pegawai login memakai NIP; password awal sama dengan NIP dan wajib diganti pada login pertama.
+- Login dilindungi CAPTCHA yang diverifikasi server; sesi berakhir setelah 30 menit tidak aktif dan tidak dapat dipakai kembali setelah tab ditutup.
 - Administrator merupakan akun sistem terpisah, login memakai username dan password awal dari environment Render, serta tidak tercatat sebagai pegawai.
 - Profil untuk mengubah password serta memverifikasi email dan nomor HP pemulihan.
 - Dashboard otomatis mengikuti periode terbaru yang dipublikasikan admin.
@@ -22,8 +23,9 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Admin dapat menambah, memindahkan, menonaktifkan/menghapus, dan mereset password pengguna.
 - Admin dapat menambah dan mengubah aturan potongan langsung dari Parameter Sistem.
 - Import workbook bulanan dengan validasi format, NIP, tanggal, duplikasi, unit, hash file, staging, dan publikasi atomik.
-- Notifikasi dalam aplikasi dan email setelah periode dipublikasikan; angka notifikasi dihapus ketika panel notifikasi dibuka.
+- Notifikasi dalam aplikasi, email, dan SMS setelah periode dipublikasikan; email/SMS hanya dijadwalkan untuk kontak terverifikasi dan angka notifikasi dihapus ketika panel notifikasi dibuka.
 - Pengiriman OTP email/nomor HP diverifikasi langsung terhadap respons provider dan kegagalan tidak memutus sesi pengguna.
+- Navigasi membatalkan request halaman lama agar hasil loading dari menu sebelumnya tidak menimpa menu yang sedang aktif.
 - Email mendukung Gmail SMTP tanpa domain maupun Resend dengan domain terverifikasi; nomor HP mendukung Twilio SMS atau webhook internal.
 - Audit log untuk perubahan penting.
 
@@ -124,4 +126,4 @@ docs/                        panduan deployment dan operasi
 
 ## Catatan produksi
 
-Paket ini sudah melewati build, `go vet`, unit test parser, pengujian workbook contoh (33.690 baris aktif), dan eksekusi migration+seed pada runtime PostgreSQL kompatibel. Sebelum digunakan untuk data tukin riil, lakukan UAT dengan perwakilan pegawai/atasan/admin, verifikasi kembali penetapan pejabat hasil inferensi workbook, aktifkan backup, dan lakukan penilaian keamanan serta kepatuhan internal.
+Versi dasar paket telah melewati build, `go vet`, unit test parser, pengujian workbook contoh (33.690 baris aktif), dan eksekusi migration+seed pada runtime PostgreSQL kompatibel. Setiap revisi berikutnya wajib melewati CI GitHub yang tersedia sebelum deployment. Sebelum digunakan untuk data tukin riil, lakukan UAT dengan perwakilan pegawai/atasan/admin, verifikasi kembali penetapan pejabat hasil inferensi workbook, aktifkan backup, dan lakukan penilaian keamanan serta kepatuhan internal.

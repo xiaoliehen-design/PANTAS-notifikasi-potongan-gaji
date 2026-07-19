@@ -7,7 +7,7 @@
   <meta name="description" content="PANTAS — Pemantauan Absensi dan Tunjangan Secara Akumulatif">
   <title>PANTAS | BC Tanjung Priok</title>
   <link rel="stylesheet" href="/styles.css">
-  <script defer src="/app.js?v=20260719-email-phone-notifications"></script>
+  <script defer src="/app.js?v=20260720-session-captcha-navigation"></script>
 </head>
 <body>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
@@ -52,6 +52,7 @@
           <form id="login-form" class="stack-lg" novalidate>
             <label class="field auth-field"><span>NIP atau username admin</span><span class="input-with-icon"><span aria-hidden="true">◎</span><input name="identifier" autocomplete="username" maxlength="64" placeholder="Masukkan NIP atau username" required></span></label>
             <label class="field auth-field"><span>Password</span><span class="password-wrap input-with-icon"><span aria-hidden="true">⌑</span><input name="password" type="password" autocomplete="current-password" placeholder="Masukkan password" required><button class="icon-button password-toggle" type="button" aria-label="Tampilkan password">◉</button></span></label>
+            <label class="field auth-field"><span>Verifikasi keamanan</span><span class="captcha-box"><img id="login-captcha-image" width="220" height="64" alt="Kode CAPTCHA lima karakter"><button id="refresh-captcha" class="button button-small button-ghost" type="button" title="Buat kode CAPTCHA baru"><span aria-hidden="true">↻</span> Ganti kode</button></span><input class="captcha-answer" name="captcha" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" minlength="5" maxlength="5" pattern="[A-Za-z2-9]{5}" placeholder="Ketik 5 karakter di atas" required></label>
             <button class="button button-primary button-full login-button" type="submit"><span>Masuk dengan aman</span><span aria-hidden="true">→</span></button>
           </form>
           <div class="auth-meta"><span><span aria-hidden="true">✓</span> Akses privat</span><button id="show-forgot" class="link-button" type="button">Lupa password?</button></div>

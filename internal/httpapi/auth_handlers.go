@@ -3,17 +3,52 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/bcpriok/pantas/internal/auth"
 )
+
+func (a *App) captcha(response http.ResponseWriter, _ *http.Request) {
+	token, image, err := a.auth.NewLoginCaptcha()
+	if err != nil {
+		a.log.Error("create login captcha", "error", err)
+		writeError(response, http.StatusInternalServerError, "CAPTCHA belum dapat dibuat.", "captcha_unavailable")
+		return
+	}
+	http.SetCookie(response, &http.Cookie{
+		Name: auth.LoginCaptchaCookieName, Value: token, Path: "/api/auth",
+		HttpOnly: true, Secure: a.cfg.CookieSecure, SameSite: http.SameSiteStrictMode,
+	})
+	response.Header().Set("Content-Type", "image/png")
+	response.Header().Set("Cache-Control", "no-store, max-age=0")
+	response.Header().Set("Pragma", "no-cache")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write(image)
+}
+
+func (a *App) clearLoginCaptcha(response http.ResponseWriter) {
+	http.SetCookie(response, &http.Cookie{
+		Name: auth.LoginCaptchaCookieName, Value: "", Path: "/api/auth",
+		MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: true,
+		Secure: a.cfg.CookieSecure, SameSite: http.SameSiteStrictMode,
+	})
+}
 
 func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	var input struct {
 		Identifier string `json:"identifier"`
 		NIP        string `json:"nip"`
 		Password   string `json:"password"`
+		Captcha    string `json:"captcha"`
 	}
 	if !decodeJSON(response, request, &input) {
+		return
+	}
+	captchaCookie, _ := request.Cookie(auth.LoginCaptchaCookieName)
+	a.clearLoginCaptcha(response)
+	if captchaCookie == nil || !a.auth.VerifyLoginCaptcha(captchaCookie.Value, input.Captcha) {
+		writeError(response, http.StatusUnprocessableEntity, "Kode CAPTCHA salah atau kedaluwarsa. Silakan coba kode baru.", "captcha_invalid")
 		return
 	}
 	identifier := input.Identifier
@@ -34,7 +69,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.auth.SetCookies(response, result)
-	writeJSON(response, http.StatusOK, map[string]any{"user": result.Principal})
+	writeJSON(response, http.StatusOK, map[string]any{"user": result.Principal, "tab_token": result.TabToken})
 }
 
 func (a *App) me(response http.ResponseWriter, _ *http.Request, principal auth.Principal) {

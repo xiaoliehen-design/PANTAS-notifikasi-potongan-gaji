@@ -95,6 +95,10 @@ a { color: inherit; }
 .input-with-icon input, .input-with-icon input:focus { min-height: 50px; padding: 10px 46px 10px 0; border: 0; outline: 0; background: transparent; box-shadow: none; }
 .input-with-icon:not(.password-wrap) input { padding-right: 14px; }
 .password-wrap .icon-button { position: absolute; right: 7px; top: 7px; color: var(--slate-500); background: transparent; }
+.captcha-box { min-height: 66px; display: flex; align-items: center; gap: 10px; padding: 0; }
+.captcha-box img { width: min(220px, 64%); height: 64px; flex: 1 1 220px; border: 1px solid var(--slate-300); border-radius: 11px; background: var(--slate-100); object-fit: cover; }
+.captcha-box .button { min-width: 108px; flex: 0 0 auto; }
+.captcha-answer { text-align: center; text-transform: uppercase; letter-spacing: .22em; font-weight: 800; }
 .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 17px; border: 0; border-radius: var(--radius-sm); font-weight: 750; transition: transform .15s, background .2s, box-shadow .2s; }
 .button:active:not(:disabled) { transform: translateY(1px); }
 .button-primary { color: white; background: linear-gradient(135deg, var(--navy-700), var(--blue-600)); box-shadow: 0 8px 20px rgba(16,83,135,.20); }
@@ -112,6 +116,12 @@ a { color: inherit; }
 .auth-meta > span { display: flex; align-items: center; gap: 5px; }
 .auth-footnote { display: flex; align-items: flex-start; justify-content: center; gap: 7px; margin: 30px 0 0; padding-top: 20px; border-top: 1px solid var(--slate-200); color: var(--slate-500); text-align: center; font-size: 11px; line-height: 1.5; }
 .otp-input { text-align: center; font-size: 26px; letter-spacing: .35em; font-weight: 800; }
+
+@media (max-width: 480px) {
+  .captcha-box { align-items: stretch; flex-direction: column; }
+  .captcha-box img { width: 100%; flex-basis: 64px; }
+  .captcha-box .button { width: 100%; }
+}
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); transition: grid-template-columns .24s ease; }
 .app-shell.sidebar-collapsed { grid-template-columns: 82px minmax(0, 1fr); }

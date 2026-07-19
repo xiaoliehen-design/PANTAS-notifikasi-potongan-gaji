@@ -44,3 +44,22 @@ func TestValidHTTPURL(t *testing.T) {
 		t.Fatal("isHTTPSURL did not enforce https")
 	}
 }
+
+func TestEnvMailAddressRemovesAccidentalOuterQuotes(t *testing.T) {
+	t.Setenv("EMAIL_FROM", `"PANTAS <pantas@example.com>"`)
+	if actual := envMailAddress("EMAIL_FROM"); actual != "PANTAS <pantas@example.com>" {
+		t.Fatalf("envMailAddress() = %q", actual)
+	}
+}
+
+func TestSMTPTLSModeAcceptsLegacyRenderKey(t *testing.T) {
+	t.Setenv("SMTP_TLS_MODE", "")
+	t.Setenv("SMTP_TLS", "STARTTLS")
+	if actual := smtpTLSMode(); actual != "starttls" {
+		t.Fatalf("smtpTLSMode() = %q, want starttls", actual)
+	}
+	t.Setenv("SMTP_TLS_MODE", "implicit")
+	if actual := smtpTLSMode(); actual != "implicit" {
+		t.Fatalf("smtpTLSMode() = %q, want implicit", actual)
+	}
+}

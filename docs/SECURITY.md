@@ -10,7 +10,10 @@ PANTAS menangani NIP, presensi, potongan tukin, alasan banding, dan dokumen pend
 - Password setelah perubahan di-hash dengan bcrypt melalui `pgcrypto` cost 12.
 - Sesi memakai token acak 256-bit yang hanya disimpan sebagai hash di database.
 - Cookie sesi `HttpOnly`, `Secure`, dan `SameSite=Lax` pada produksi.
+- Cookie autentikasi bersifat session cookie dan setiap sesi diikat ke token khusus tab di `sessionStorage`; tab baru atau tab yang dibuka kembali wajib login.
+- Sesi berakhir setelah 30 menit tanpa interaksi; heartbeat hanya memperpanjang sesi ketika pengguna masih aktif.
 - CSRF double-submit yang juga dibandingkan dengan hash sesi.
+- Login memakai CAPTCHA visual satu kali; jawaban berumur lima menit dan disimpan terenkripsi dalam cookie `HttpOnly`.
 - Pemeriksaan same-origin untuk request mutasi.
 - Rate limit login per NIP dan IP; OTP berlaku 10 menit dan dibatasi lima percobaan.
 - Reset password dan perubahan kontak mencabut/memverifikasi kredensial sesuai alur.
