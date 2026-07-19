@@ -171,6 +171,7 @@ func (a *App) serveSPA(response http.ResponseWriter, request *http.Request) {
 	}
 	cleanPath := strings.TrimPrefix(request.URL.Path, "/")
 	if cleanPath != "" && strings.Contains(cleanPath, ".") {
+		response.Header().Set("Cache-Control", "no-cache")
 		a.static.ServeHTTP(response, request)
 		return
 	}

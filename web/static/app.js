@@ -441,7 +441,46 @@ async function renderProfile(){
   $("[data-change-password]").addEventListener("click",()=>$("#password-dialog").showModal());
 }
 
-function openContactDialog(channel){const label=channel==="email"?"Email":"Nomor HP";const dialog=dynamicDialog(`Verifikasi ${label}`,`<form class="stack-lg" data-contact-start><label class="field"><span>${label} baru</span><input name="destination" type="${channel==="email"?"email":"tel"}" required></label><label class="field"><span>Password saat ini</span><input name="current_password" type="password" required></label><button class="button button-primary">Kirim kode</button></form>`);$("form",dialog).addEventListener("submit",async event=>{event.preventDefault();const values=formJSON(event.currentTarget);try{await api("/api/profile/contact/start",{method:"POST",body:{channel,...values}});event.currentTarget.outerHTML=`<form class="stack-lg" data-contact-verify><label class="field"><span>Kode 6 digit</span><input class="otp-input" name="otp" maxlength="6" required></label><button class="button button-primary">Verifikasi</button></form>`;$("[data-contact-verify]",dialog).addEventListener("submit",async verifyEvent=>{verifyEvent.preventDefault();try{await api("/api/profile/contact/verify",{method:"POST",body:{channel,otp:verifyEvent.currentTarget.elements.otp.value}});dialog.close();dialog.remove();state.user=(await api("/api/auth/me")).user;toast("Kontak terverifikasi","Kontak dapat digunakan untuk pemulihan.","success");await renderProfile();}catch(error){toast("Kode salah",error.message,"error");}});}catch(error){toast("Belum dapat mengirim",error.message,"error");}});}
+function openContactDialog(channel) {
+  const label = channel === "email" ? "Email" : "Nomor HP";
+  const dialog = dynamicDialog(`Verifikasi ${label}`, `<form class="stack-lg" data-contact-start><label class="field"><span>${label} baru</span><input name="destination" type="${channel === "email" ? "email" : "tel"}" required></label><label class="field"><span>Password saat ini</span><input name="current_password" type="password" required></label><button class="button button-primary">Kirim kode</button></form>`);
+  const startForm = $("[data-contact-start]", dialog);
+  startForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = $("button[type=submit]", form);
+    const values = formJSON(form);
+    setBusy(button, true, "Mengirim…");
+    try {
+      await api("/api/profile/contact/start", { method: "POST", body: { channel, ...values } });
+      form.outerHTML = `<form class="stack-lg" data-contact-verify><label class="field"><span>Kode 6 digit</span><input class="otp-input" name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="button button-primary">Verifikasi</button></form>`;
+      const verifyForm = $("[data-contact-verify]", dialog);
+      verifyForm.addEventListener("submit", async verifyEvent => {
+        verifyEvent.preventDefault();
+        const otpForm = verifyEvent.currentTarget;
+        const verifyButton = $("button[type=submit]", otpForm);
+        const otp = otpForm.elements.otp.value;
+        setBusy(verifyButton, true, "Memverifikasi…");
+        try {
+          await api("/api/profile/contact/verify", { method: "POST", body: { channel, otp } });
+          dialog.close();
+          dialog.remove();
+          state.user = (await api("/api/auth/me")).user;
+          toast("Kontak terverifikasi", "Kontak dapat digunakan untuk pemulihan.", "success");
+          await renderProfile();
+        } catch (error) {
+          toast("Kode salah", error.message, "error");
+        } finally {
+          setBusy(verifyButton, false);
+        }
+      });
+    } catch (error) {
+      toast("Belum dapat mengirim", error.message, "error");
+    } finally {
+      if (form.isConnected) setBusy(button, false);
+    }
+  });
+}
 
 async function openNotifications(){const drawer=$("#notification-drawer");drawer.hidden=false;$("#drawer-backdrop").hidden=false;const data=await api("/api/notifications");$("#notification-list").innerHTML=data.items.length?data.items.map(notificationItem).join(""):emptyState("♢","Belum ada notifikasi","");$$('[data-notification]',drawer).forEach(item=>item.addEventListener("click",async()=>{if(!item.classList.contains("unread"))return;await api(`/api/notifications/${item.dataset.notification}/read`,{method:"POST"});item.classList.remove("unread");}));}
 function closeNotifications(){$("#notification-drawer").hidden=true;$("#drawer-backdrop").hidden=true;}

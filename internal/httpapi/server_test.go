@@ -46,3 +46,21 @@ func TestServeSPAHeadHasNoBodyOrRedirect(t *testing.T) {
 		t.Fatalf("body length = %d, want 0", response.Body.Len())
 	}
 }
+
+func TestServeSPAStaticAssetsRequireRevalidation(t *testing.T) {
+	app := &App{static: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+		_, _ = response.Write([]byte("asset"))
+	})}
+	request := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	response := httptest.NewRecorder()
+
+	app.serveSPA(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache", cacheControl)
+	}
+}
