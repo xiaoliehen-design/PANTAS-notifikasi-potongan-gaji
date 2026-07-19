@@ -8,7 +8,7 @@ flowchart TD
     G -->|Postgres/TLS| D[(Supabase PostgreSQL)]
     G -->|service-role server-side| S[(Supabase Storage privat)]
     G -->|antrean notifikasi| D
-    G -->|HTTPS| E[Resend / webhook nomor HP]
+    G -->|HTTPS| E[Brevo / Resend / webhook nomor HP]
 ```
 
 Go menyajikan API dan aset web dari satu binary. Browser tidak menerima connection string database atau service-role key. Seluruh pemeriksaan kepemilikan dan lingkup organisasi dilakukan kembali di backend; menyembunyikan menu pada antarmuka bukan mekanisme otorisasi.

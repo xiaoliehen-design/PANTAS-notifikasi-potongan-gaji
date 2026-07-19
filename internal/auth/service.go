@@ -100,6 +100,22 @@ func contactInputError(message string) error {
 	return &ContactInputError{message: message}
 }
 
+type deliveryError struct {
+	message string
+}
+
+func (e *deliveryError) Error() string {
+	return e.message
+}
+
+func (e *deliveryError) Unwrap() error {
+	return ErrDeliveryFailed
+}
+
+func providerDeliveryError(err error) error {
+	return &deliveryError{message: mailer.PublicDeliveryError(err)}
+}
+
 type Service struct {
 	pool     *pgxpool.Pool
 	cfg      config.Config
@@ -522,7 +538,7 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 		return err
 	}
 	if err := s.delivery.DeliverClaimed(ctx, jobID); err != nil {
-		return ErrDeliveryFailed
+		return providerDeliveryError(err)
 	}
 	return nil
 }
@@ -737,7 +753,7 @@ func (s *Service) createAndQueueOTP(ctx context.Context, userID, name, purpose, 
 		return err
 	}
 	if err := s.delivery.DeliverClaimed(ctx, jobID); err != nil {
-		return ErrDeliveryFailed
+		return providerDeliveryError(err)
 	}
 	return nil
 }

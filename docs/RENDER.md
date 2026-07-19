@@ -24,8 +24,8 @@ Blueprint menggunakan plan `starter`, health check `/healthz`, dan auto-deploy s
 | `BOOTSTRAP_ADMIN_USERNAME` | Username admin, misalnya `admin.pantas` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Password awal kuat, 12–128 karakter dan minimal tiga jenis karakter |
 | `BOOTSTRAP_ADMIN_NAME` | Nama tampilan administrator |
-| `EMAIL_PROVIDER` | `smtp` untuk Gmail tanpa domain atau `resend` untuk domain terverifikasi |
-| `EMAIL_FROM` | Nama dan alamat pengirim; untuk Gmail harus memakai akun Gmail yang diautentikasi |
+| `EMAIL_PROVIDER` | `brevo` untuk Render Free; `smtp` hanya bila plan mengizinkan port SMTP; `resend` untuk domain terverifikasi |
+| `EMAIL_FROM` | Nama dan alamat pengirim yang sudah diverifikasi pada provider |
 
 Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak memerlukan NIP dan tidak ikut dalam monitoring pegawai. Username dinormalisasi menjadi huruf kecil. Password environment hanya digunakan saat akun pertama kali dibuat dan tidak menimpa password yang sudah diganti melalui aplikasi.
 
@@ -33,6 +33,8 @@ Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak meme
 
 | Key | Default | Keterangan |
 |---|---:|---|
+| `BREVO_API_KEY` | kosong | API key transactional email; disarankan pada Render Free |
+| `BREVO_API_URL` | `https://api.brevo.com/v3/smtp/email` | Endpoint HTTPS Brevo |
 | `SMTP_HOST` | kosong | Untuk Gmail isi `smtp.gmail.com` |
 | `SMTP_PORT` | `587` | Port STARTTLS Gmail |
 | `SMTP_USERNAME` | kosong | Alamat Gmail khusus PANTAS |
@@ -88,23 +90,27 @@ where user_id = (
 
 Ganti username dan password sementara pada contoh tersebut. Jangan menyimpan query yang sudah berisi password nyata.
 
-## Email Gmail tanpa domain
+## Email pada Render Free: gunakan Brevo HTTPS
 
-Untuk kondisi yang hanya mempunyai URL `onrender.com`, gunakan Gmail SMTP. URL Render tetap menjadi `APP_URL` dan tidak boleh dijadikan alamat pengirim email. Buat akun Gmail khusus PANTAS, aktifkan verifikasi dua langkah, lalu buat App Password.
+[Render Free memblokir koneksi keluar pada port 25, 465, dan 587](https://render.com/docs/free). Karena Gmail SMTP memakai port 465/587, perubahan App Password atau TLS tidak dapat memperbaiki timeout pada plan tersebut. Gunakan Brevo transactional API melalui HTTPS port 443.
 
-Isi Environment Render:
+1. Buat akun Brevo.
+2. Daftarkan alamat pengirim pada menu sender dan selesaikan verifikasinya.
+3. Buat API key khusus PANTAS.
+4. Isi Environment Render berikut:
 
 ```env
-EMAIL_PROVIDER=smtp
-EMAIL_FROM=PANTAS <pantas.notifikasi@gmail.com>
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=pantas.notifikasi@gmail.com
-SMTP_PASSWORD=app-password-16-karakter
-SMTP_TLS_MODE=starttls
+EMAIL_PROVIDER=brevo
+EMAIL_FROM=PANTAS <alamat-sender-terverifikasi@example.com>
+BREVO_API_KEY=api-key-brevo-baru
+BREVO_API_URL=https://api.brevo.com/v3/smtp/email
 ```
 
-Jangan mengisi `SMTP_PASSWORD` dengan password login Gmail. Jangan menaruh App Password di GitHub. Masukkan `EMAIL_FROM` tanpa tanda kutip pembuka/penutup dan gunakan key `SMTP_TLS_MODE` (bukan `SMTP_TLS`). Versi ini tetap menormalisasi format lama agar deployment yang sudah ada tidak langsung gagal. Jika `RESEND_API_KEY` lama masih tersimpan, nilai tersebut boleh tetap ada selama `EMAIL_PROVIDER` diisi `smtp`.
+Nilai `SMTP_*` lama boleh tetap tersimpan karena tidak dipakai saat `EMAIL_PROVIDER=brevo`. Setelah **Save Changes**, lakukan **Manual Deploy → Deploy latest commit**. PANTAS hanya menampilkan diagnosis aman kepada pengguna; detail respons provider dicatat pada `notification_jobs.last_error`.
+
+## Gmail SMTP pada plan yang mengizinkan SMTP
+
+Jika service memakai plan Render berbayar atau dijalankan pada host yang mengizinkan SMTP, Gmail tetap didukung dengan port 587/STARTTLS. Aktifkan 2-Step Verification dan gunakan App Password 16 karakter, bukan password login Gmail. `EMAIL_FROM` harus menggunakan alamat akun yang diautentikasi dan tidak dibungkus tanda kutip.
 
 PANTAS meminta provider menerima OTP sebelum formulir kode ditampilkan. Kegagalan dicatat pada `notification_jobs` dan pengguna tetap berada di halaman yang sama. Pesan "Password PANTAS salah" berarti pengiriman belum dicoba karena password yang dimasukkan berbeda dari password login PANTAS.
 
@@ -144,7 +150,10 @@ Header `Authorization: Bearer <PHONE_OTP_WEBHOOK_TOKEN>` ditambahkan bila token 
 - **Database unavailable:** pastikan password benar, connection string memakai pooler port 5432, dan `sslmode=require`.
 - **Health check 503:** migration belum selesai atau database tidak dapat dijangkau.
 - **Dokumen gagal upload:** cek bucket, `SUPABASE_URL`, dan service-role key.
-- **Email berstatus failed:** untuk Gmail cek `EMAIL_PROVIDER`, pastikan `EMAIL_FROM` tidak dibungkus tanda kutip, alamat pengirim sama dengan `SMTP_USERNAME`, App Password berisi tepat 16 karakter tanpa spasi, key TLS bernama `SMTP_TLS_MODE`, lalu periksa `last_error`; untuk Resend cek API key/domain.
+- **SMTP timeout pada Render Free:** perilaku ini disebabkan port 25/465/587 yang diblokir; ubah ke `EMAIL_PROVIDER=brevo` dan gunakan API HTTPS.
+- **Brevo 401/403:** buat API key baru dan periksa `BREVO_API_KEY`; jangan memakai SMTP key pada field tersebut.
+- **Brevo 400/sender ditolak:** pastikan alamat `EMAIL_FROM` sudah terdaftar dan terverifikasi pada Brevo.
+- **Email berstatus failed:** periksa `notification_jobs.last_error` dan log transaksi provider; untuk Resend periksa API key/domain.
 - **OTP email tidak masuk walau status sent:** periksa folder spam dan aktivitas akun/provider. Status `sent` berarti provider menerima permintaan, bukan jaminan inbox.
 - **OTP/notifikasi nomor HP tidak terkirim:** untuk Twilio cek Messaging Logs dan pastikan akun trial sudah memverifikasi nomor tujuan; untuk webhook pastikan endpoint menerima `contact_otp` serta `period_published` dan mengembalikan HTTP 2xx.
 - **403 invalid_origin:** nilai `APP_URL` tidak sama dengan origin URL yang dibuka pengguna.

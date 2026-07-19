@@ -26,7 +26,7 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Notifikasi dalam aplikasi, email, dan SMS setelah periode dipublikasikan; email/SMS hanya dijadwalkan untuk kontak terverifikasi dan angka notifikasi dihapus ketika panel notifikasi dibuka.
 - Pengiriman OTP email/nomor HP diverifikasi langsung terhadap respons provider dan kegagalan tidak memutus sesi pengguna.
 - Navigasi membatalkan request halaman lama agar hasil loading dari menu sebelumnya tidak menimpa menu yang sedang aktif.
-- Email mendukung Gmail SMTP tanpa domain maupun Resend dengan domain terverifikasi; nomor HP mendukung Twilio SMS atau webhook internal.
+- Email mendukung Brevo API melalui HTTPS untuk Render Free, Gmail SMTP pada host yang mengizinkan SMTP, dan Resend dengan domain terverifikasi; nomor HP mendukung Twilio SMS atau webhook internal.
 - Audit log untuk perubahan penting.
 
 ## Data awal dari workbook
@@ -116,7 +116,7 @@ cmd/server/                  entrypoint aplikasi
 internal/auth/               sesi, password, OTP, CSRF, rate limit
 internal/httpapi/            API, otorisasi, dashboard, banding, admin
 internal/importer/           parser XLSX, perhitungan, staging, publikasi
-internal/mailer/             antrean Gmail/Resend dan Twilio/webhook nomor HP
+internal/mailer/             antrean Brevo/Gmail/Resend dan Twilio/webhook nomor HP
 internal/storage/            akses bucket privat Supabase
 supabase/migrations/         skema database dan default parameter
 supabase/seed/               unit, nama, NIP, dan jabatan awal

@@ -26,6 +26,8 @@ type Config struct {
 	SupabaseServiceKey     string
 	SupabaseStorageBucket  string
 	EmailProvider          string
+	BrevoAPIKey            string
+	BrevoAPIURL            string
 	ResendAPIKey           string
 	ResendAPIURL           string
 	EmailFrom              string
@@ -67,6 +69,8 @@ func Load() (Config, error) {
 		SupabaseServiceKey:     strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
 		SupabaseStorageBucket:  env("SUPABASE_STORAGE_BUCKET", "pantas-appeals"),
 		EmailProvider:          strings.ToLower(env("EMAIL_PROVIDER", "auto")),
+		BrevoAPIKey:            strings.TrimSpace(os.Getenv("BREVO_API_KEY")),
+		BrevoAPIURL:            strings.TrimRight(env("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email"), "/"),
 		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
 		ResendAPIURL:           strings.TrimRight(env("RESEND_API_URL", "https://api.resend.com/emails"), "/"),
 		EmailFrom:              envMailAddress("EMAIL_FROM"),
@@ -121,12 +125,18 @@ func Load() (Config, error) {
 	if cfg.SupabaseURL == "" || cfg.SupabaseServiceKey == "" {
 		problems = append(problems, "SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY wajib diisi untuk dokumen banding")
 	}
-	if cfg.EmailProvider != "auto" && cfg.EmailProvider != "resend" && cfg.EmailProvider != "smtp" {
-		problems = append(problems, "EMAIL_PROVIDER harus berisi auto, resend, atau smtp")
+	if cfg.EmailProvider != "auto" && cfg.EmailProvider != "brevo" && cfg.EmailProvider != "resend" && cfg.EmailProvider != "smtp" {
+		problems = append(problems, "EMAIL_PROVIDER harus berisi auto, brevo, resend, atau smtp")
 	}
+	brevoConfigured := cfg.BrevoAPIKey != ""
 	resendConfigured := cfg.ResendAPIKey != ""
 	smtpConfigured := cfg.SMTPHost != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != ""
-	if cfg.EmailProvider == "resend" || (cfg.EmailProvider == "auto" && resendConfigured && !smtpConfigured) {
+	if cfg.EmailProvider == "brevo" || (cfg.EmailProvider == "auto" && brevoConfigured && !resendConfigured && !smtpConfigured) {
+		if cfg.BrevoAPIKey == "" || cfg.EmailFrom == "" {
+			problems = append(problems, "BREVO_API_KEY dan EMAIL_FROM wajib diisi untuk EMAIL_PROVIDER=brevo")
+		}
+	}
+	if cfg.EmailProvider == "resend" || (cfg.EmailProvider == "auto" && resendConfigured && !brevoConfigured && !smtpConfigured) {
 		if cfg.ResendAPIKey == "" || cfg.EmailFrom == "" {
 			problems = append(problems, "RESEND_API_KEY dan EMAIL_FROM wajib diisi untuk EMAIL_PROVIDER=resend")
 		}
@@ -142,8 +152,14 @@ func Load() (Config, error) {
 			problems = append(problems, "SMTP_TLS_MODE harus berisi starttls atau implicit")
 		}
 	}
-	if cfg.EmailProvider == "auto" && resendConfigured && smtpConfigured {
-		problems = append(problems, "EMAIL_PROVIDER wajib dipilih jika konfigurasi Resend dan SMTP sama-sama terisi")
+	configuredEmailProviders := 0
+	for _, configured := range []bool{brevoConfigured, resendConfigured, smtpConfigured} {
+		if configured {
+			configuredEmailProviders++
+		}
+	}
+	if cfg.EmailProvider == "auto" && configuredEmailProviders > 1 {
+		problems = append(problems, "EMAIL_PROVIDER wajib dipilih jika lebih dari satu konfigurasi provider email terisi")
 	}
 	if cfg.EmailFrom != "" {
 		if _, err := mailaddress.ParseAddress(cfg.EmailFrom); err != nil {
@@ -154,6 +170,11 @@ func Load() (Config, error) {
 		problems = append(problems, "RESEND_API_URL tidak valid")
 	} else if cfg.Environment == "production" && (cfg.EmailProvider == "resend" || resendConfigured) && !isHTTPSURL(cfg.ResendAPIURL) {
 		problems = append(problems, "RESEND_API_URL production wajib menggunakan https")
+	}
+	if (cfg.EmailProvider == "brevo" || brevoConfigured) && !validHTTPURL(cfg.BrevoAPIURL) {
+		problems = append(problems, "BREVO_API_URL tidak valid")
+	} else if cfg.Environment == "production" && (cfg.EmailProvider == "brevo" || brevoConfigured) && !isHTTPSURL(cfg.BrevoAPIURL) {
+		problems = append(problems, "BREVO_API_URL production wajib menggunakan https")
 	}
 	if cfg.PhoneProvider != "auto" && cfg.PhoneProvider != "webhook" && cfg.PhoneProvider != "twilio" {
 		problems = append(problems, "PHONE_PROVIDER harus berisi auto, webhook, atau twilio")
@@ -314,5 +335,5 @@ func validAdminPassword(value, username string) bool {
 }
 
 func (c Config) String() string {
-	return fmt.Sprintf("env=%s addr=%s app_url=%s", c.Environment, c.Address(), c.AppURL)
+	return fmt.Sprintf("env=%s addr=%s app_url=%s email_provider=%s phone_provider=%s", c.Environment, c.Address(), c.AppURL, c.EmailProvider, c.PhoneProvider)
 }

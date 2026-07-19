@@ -8,21 +8,45 @@ https://pantas-notifikasi-potongan-gaji.onrender.com
 
 URL tersebut digunakan sebagai `APP_URL`. Subdomain `onrender.com` bukan domain email dan tidak digunakan pada `EMAIL_FROM`.
 
-## A. Gmail SMTP tanpa domain
+## A. Render Free: Brevo API melalui HTTPS (disarankan)
 
-### 1. Siapkan akun pengirim
+[Render Free memblokir trafik keluar pada port 25, 465, dan 587](https://render.com/docs/free). Karena Gmail SMTP memakai port 465/587, konfigurasi host, TLS, username, dan App Password yang benar tetap akan berakhir dengan timeout. Gunakan provider transactional email berbasis HTTPS pada port 443.
 
-Gunakan akun Gmail khusus aplikasi, bukan akun pribadi. Contoh:
+### 1. Siapkan sender Brevo
 
-```text
-pantas.notifikasi@gmail.com
-```
+1. Buat akun Brevo, ikuti [panduan transactional email API](https://developers.brevo.com/docs/send-a-transactional-email), dan buka **Settings → Senders, Domains & Dedicated IPs**.
+2. Tambahkan alamat email khusus PANTAS sebagai sender.
+3. Masukkan kode verifikasi yang dikirim Brevo ke alamat tersebut.
+4. Buka **SMTP & API → API Keys**, buat API key khusus PANTAS, lalu simpan nilainya langsung di secret Environment Render.
 
-Aktifkan **2-Step Verification**, kemudian buka **App Passwords** dan buat App Password bernama `PANTAS Render`. Simpan 16 karakter yang ditampilkan. Jika menu App Password tidak ada, akun mungkin dibatasi administrator atau memakai Advanced Protection; gunakan akun lain yang diizinkan atau Google OAuth/relay resmi.
+Alamat sender dapat berupa Gmail. Untuk deliverability jangka panjang, domain kantor yang diautentikasi tetap lebih baik.
 
 ### 2. Isi Environment Render
 
-Pada service PANTAS pilih **Environment**, lalu isi:
+```env
+EMAIL_PROVIDER=brevo
+EMAIL_FROM=PANTAS <alamat-sender-yang-sudah-diverifikasi@example.com>
+BREVO_API_KEY=api-key-brevo-baru
+BREVO_API_URL=https://api.brevo.com/v3/smtp/email
+```
+
+`SMTP_*` boleh tetap ada selama `EMAIL_PROVIDER` diisi `brevo`; nilai SMTP tersebut tidak akan digunakan. Klik **Save Changes**, lalu **Manual Deploy → Deploy latest commit**.
+
+### 3. Uji email
+
+1. Login PANTAS menggunakan akun pegawai.
+2. Buka **Profil & Keamanan → Email → Ubah**.
+3. Masukkan email tujuan dan password PANTAS saat ini.
+4. Klik **Kirim kode**, lalu periksa inbox, spam, serta **Brevo → Transactional → Logs**.
+5. Masukkan OTP enam digit.
+
+Jika API key ditolak atau sender belum diverifikasi, PANTAS menampilkan diagnosis yang aman dan spesifik. Respons lengkap provider tetap disimpan pada `notification_jobs.last_error` untuk administrator.
+
+## B. Gmail SMTP pada Render berbayar atau lokal
+
+Gunakan akun Gmail khusus aplikasi, aktifkan **2-Step Verification**, lalu buat App Password. App Password adalah 16 karakter yang berbeda dari password login Gmail.
+
+Isi environment berikut hanya jika layanan hosting mengizinkan koneksi keluar SMTP:
 
 ```env
 APP_URL=https://pantas-notifikasi-potongan-gaji.onrender.com
@@ -39,18 +63,9 @@ SMTP_TLS_MODE=starttls
 
 Klik **Save Changes**, kemudian deploy ulang service.
 
-### 3. Uji email
+Konfigurasi ini tidak akan bekerja pada Render Free karena port 587 diblokir oleh platform. Jika muncul kegagalan autentikasi pada layanan yang mengizinkan SMTP, buat App Password baru dan pastikan alamat `EMAIL_FROM` sama dengan akun Gmail yang diautentikasi.
 
-1. Login PANTAS menggunakan akun pegawai.
-2. Buka **Profil & Keamanan → Email → Ubah**.
-3. Masukkan email tujuan.
-4. Masukkan password PANTAS yang sama dengan password login saat ini.
-5. Klik **Kirim kode** dan periksa inbox/spam.
-6. Masukkan OTP enam digit.
-
-Jika muncul `Password PANTAS salah`, backend belum mencoba mengirim email. Jika muncul `Belum dapat mengirim kode`, periksa Render Logs dan `notification_jobs.last_error`.
-
-## B. SMS nomor HP melalui Twilio
+## C. SMS nomor HP melalui Twilio
 
 Twilio tidak memerlukan domain web. Kanal ini dipakai untuk OTP verifikasi nomor HP sekaligus notifikasi saat admin mempublikasikan periode. Namun, SMS bersifat berbayar setelah trial dan ketersediaan pengirim dapat bergantung pada negara/operator.
 
@@ -102,7 +117,7 @@ Nomor `TWILIO_FROM_NUMBER` harus merupakan nomor milik akun Twilio, bukan nomor 
 
 Pada akun Twilio trial, nomor tujuan harus diverifikasi lebih dahulu. Untuk seluruh pegawai, upgrade akun dan pastikan sender/messaging service dapat mengirim ke Indonesia.
 
-## C. Notifikasi saat admin mempublikasikan periode
+## D. Notifikasi saat admin mempublikasikan periode
 
 Publikasi yang berhasil dilakukan dalam satu transaksi database. Setelah batch aktif:
 
@@ -114,7 +129,7 @@ Publikasi yang berhasil dilakukan dalam satu transaksi database. Setelah batch a
 
 Email dan SMS hanya menyatakan bahwa data periode tersedia. Nilai atau rincian potongan tidak dicantumkan dan hanya dapat dilihat setelah login ke PANTAS. Upload yang baru berstatus draft tidak mengirim notifikasi; pengiriman baru dijadwalkan setelah admin menekan **Publikasikan**.
 
-## D. Webhook internal sebagai alternatif
+## E. Webhook internal sebagai alternatif
 
 Jika kantor memiliki gateway SMS/WhatsApp sendiri, gunakan:
 
@@ -138,7 +153,7 @@ Gateway harus mengembalikan HTTP 2xx hanya setelah permintaan pengiriman diterim
 
 Webhook yang dipakai untuk notifikasi periode harus menerima `template` bernilai `period_published`, selain `contact_otp`.
 
-## E. Diagnosis database
+## F. Diagnosis database
 
 Jalankan di Supabase SQL Editor tanpa memilih kolom `payload`, karena payload berisi OTP:
 

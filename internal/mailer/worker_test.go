@@ -3,6 +3,7 @@ package mailer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -114,6 +115,70 @@ func TestSendEmailUsesConfiguredProvider(t *testing.T) {
 	}
 	if received["subject"] != "Kode verifikasi kontak PANTAS" {
 		t.Fatalf("subject = %v", received["subject"])
+	}
+}
+
+func TestSendEmailUsesBrevoHTTPSProvider(t *testing.T) {
+	var received struct {
+		Sender struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		} `json:"sender"`
+		To []struct {
+			Email string `json:"email"`
+		} `json:"to"`
+		Subject     string `json:"subject"`
+		HTMLContent string `json:"htmlContent"`
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", request.Method)
+		}
+		if request.Header.Get("api-key") != "brevo-test-key" {
+			t.Error("Brevo API key header is missing")
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode Brevo payload: %v", err)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusCreated)
+		_, _ = response.Write([]byte(`{"messageId":"test-message-id"}`))
+	}))
+	defer provider.Close()
+
+	worker := New(nil, config.Config{
+		EmailProvider: "brevo",
+		BrevoAPIKey:   "brevo-test-key",
+		BrevoAPIURL:   provider.URL,
+		EmailFrom:     "PANTAS <noreply@example.go.id>",
+		AppURL:        "https://pantas.example.go.id",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := worker.sendEmail(context.Background(), job{
+		Channel: "email", Destination: "pegawai@example.go.id", Template: "contact_otp",
+		Payload: map[string]any{"name": "Pegawai PANTAS", "otp": "123456"},
+	})
+	if err != nil {
+		t.Fatalf("sendEmail() error = %v", err)
+	}
+	if received.Sender.Name != "PANTAS" || received.Sender.Email != "noreply@example.go.id" {
+		t.Fatalf("sender = %#v", received.Sender)
+	}
+	if len(received.To) != 1 || received.To[0].Email != "pegawai@example.go.id" {
+		t.Fatalf("recipients = %#v", received.To)
+	}
+	if received.Subject != "Kode verifikasi kontak PANTAS" || !strings.Contains(received.HTMLContent, "123456") {
+		t.Fatalf("unexpected message: subject=%q body=%q", received.Subject, received.HTMLContent)
+	}
+}
+
+func TestPublicDeliveryErrorExplainsRenderSMTPBlockWithoutLeakingDetail(t *testing.T) {
+	raw := "koneksi SMTP gagal: dial tcp 192.0.2.1:587: i/o timeout"
+	message := PublicDeliveryError(errors.New(raw))
+	if !strings.Contains(message, "Render Free") || !strings.Contains(message, "EMAIL_PROVIDER=brevo") {
+		t.Fatalf("message is not actionable: %q", message)
+	}
+	if strings.Contains(message, "192.0.2.1") {
+		t.Fatalf("message leaked provider detail: %q", message)
 	}
 }
 

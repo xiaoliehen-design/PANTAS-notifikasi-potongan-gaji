@@ -116,6 +116,10 @@ func (w *Worker) ChannelConfigured(channel string) bool {
 
 func (w *Worker) emailProvider() string {
 	switch strings.ToLower(w.cfg.EmailProvider) {
+	case "brevo":
+		if w.cfg.BrevoAPIKey != "" && w.cfg.BrevoAPIURL != "" && w.cfg.EmailFrom != "" {
+			return "brevo"
+		}
 	case "smtp":
 		if w.cfg.SMTPHost != "" && w.cfg.SMTPPort != "" && w.cfg.SMTPUsername != "" && w.cfg.SMTPPassword != "" && w.cfg.EmailFrom != "" {
 			return "smtp"
@@ -125,6 +129,9 @@ func (w *Worker) emailProvider() string {
 			return "resend"
 		}
 	case "", "auto":
+		if w.cfg.BrevoAPIKey != "" && w.cfg.BrevoAPIURL != "" && w.cfg.EmailFrom != "" {
+			return "brevo"
+		}
 		if w.cfg.SMTPHost != "" && w.cfg.SMTPPort != "" && w.cfg.SMTPUsername != "" && w.cfg.SMTPPassword != "" && w.cfg.EmailFrom != "" {
 			return "smtp"
 		}
@@ -291,6 +298,8 @@ func (w *Worker) send(ctx context.Context, item job) error {
 
 func (w *Worker) sendEmail(ctx context.Context, item job) error {
 	switch w.emailProvider() {
+	case "brevo":
+		return w.sendEmailBrevo(ctx, item)
 	case "smtp":
 		return w.sendEmailSMTP(ctx, item)
 	case "resend":
@@ -298,6 +307,54 @@ func (w *Worker) sendEmail(ctx context.Context, item job) error {
 	default:
 		return fmt.Errorf("email provider belum dikonfigurasi")
 	}
+}
+
+func (w *Worker) sendEmailBrevo(ctx context.Context, item job) error {
+	if w.cfg.BrevoAPIKey == "" || w.cfg.EmailFrom == "" {
+		return fmt.Errorf("email provider belum dikonfigurasi")
+	}
+	from, err := mailaddress.ParseAddress(w.cfg.EmailFrom)
+	if err != nil {
+		return fmt.Errorf("EMAIL_FROM tidak valid: %w", err)
+	}
+	subject, body := renderTemplate(item.Template, item.Payload, w.cfg.AppURL)
+	payload := map[string]any{
+		"sender": map[string]string{
+			"name":  from.Name,
+			"email": from.Address,
+		},
+		"to":          []map[string]string{{"email": item.Destination}},
+		"subject":     subject,
+		"htmlContent": body,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.BrevoAPIURL, bytes.NewReader(encoded))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("api-key", w.cfg.BrevoAPIKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "PANTAS/1.0")
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("koneksi Brevo API gagal: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Brevo status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	var result struct {
+		MessageID string `json:"messageId"`
+	}
+	if err := json.Unmarshal(responseBody, &result); err != nil || result.MessageID == "" {
+		return fmt.Errorf("respons Brevo tidak memuat messageId")
+	}
+	return nil
 }
 
 func (w *Worker) sendEmailResend(ctx context.Context, item job) error {
@@ -403,6 +460,36 @@ func (w *Worker) sendEmailSMTP(ctx context.Context, item job) error {
 		return fmt.Errorf("penutupan SMTP gagal: %w", err)
 	}
 	return nil
+}
+
+// PublicDeliveryError turns detailed provider errors into safe, actionable
+// messages for the browser. The original error remains available in the
+// notification job and server log, without exposing provider responses.
+func PublicDeliveryError(err error) string {
+	if err == nil {
+		return "Kode verifikasi berhasil dikirim."
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "koneksi smtp gagal"):
+		return "Koneksi SMTP tidak dapat dibuka. Render Free memblokir port SMTP; gunakan EMAIL_PROVIDER=brevo melalui HTTPS atau upgrade layanan Render."
+	case strings.Contains(message, "autentikasi smtp gagal"):
+		return "Gmail menolak autentikasi SMTP. Pastikan 2-Step Verification aktif dan gunakan App Password baru, bukan password login Gmail."
+	case strings.Contains(message, "brevo status 401"), strings.Contains(message, "brevo status 403"):
+		return "API key Brevo ditolak. Buat API key baru dan periksa BREVO_API_KEY pada Render."
+	case strings.Contains(message, "brevo status 400"):
+		return "Brevo menolak data email. Pastikan alamat pada EMAIL_FROM sudah didaftarkan dan diverifikasi sebagai sender Brevo."
+	case strings.Contains(message, "brevo status 429"):
+		return "Batas pengiriman Brevo sedang tercapai. Periksa kuota Brevo lalu coba kembali."
+	case strings.Contains(message, "koneksi brevo api gagal"):
+		return "Brevo API belum dapat dihubungi melalui HTTPS. Periksa status layanan dan coba kembali."
+	case strings.Contains(message, "resend"):
+		return "Provider Resend menolak pengiriman. Periksa API key dan verifikasi domain pengirim."
+	case strings.Contains(message, "twilio"):
+		return "Provider SMS menolak pengiriman. Periksa kredensial, kuota, dan nomor tujuan pada Twilio."
+	default:
+		return "Kode verifikasi belum dapat dikirim; periksa konfigurasi provider dan coba kembali."
+	}
 }
 
 func smtpMessage(from *mailaddress.Address, destination, subject, body string) ([]byte, error) {

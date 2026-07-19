@@ -36,7 +36,7 @@ Password awal administrator tidak menggunakan NIP. Nilainya berasal dari secret 
 
 - Repository GitHub private dan aksesnya ditinjau.
 - Penetapan 58 pejabat hasil urutan workbook diverifikasi oleh SDM/admin.
-- Hanya personel berwenang yang memiliki akses Supabase/Render/Resend.
+- Hanya personel berwenang yang memiliki akses Supabase/Render/provider email.
 - Service-role key dan database password hanya berada pada secret environment.
 - `APP_URL` HTTPS benar; `COOKIE_SECURE=true`.
 - Backup dan uji restore selesai.

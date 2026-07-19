@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -114,5 +115,15 @@ func TestAuthenticationCookiesAreSessionScopedAndTabBound(t *testing.T) {
 	}
 	if !values[SessionCookieName].HttpOnly || values[CSRFCookieName].HttpOnly || !values[TabProofCookieName].HttpOnly {
 		t.Fatal("cookie HttpOnly flags are incorrect")
+	}
+}
+
+func TestProviderDeliveryErrorMatchesPublicSentinel(t *testing.T) {
+	err := providerDeliveryError(errors.New("koneksi SMTP gagal: dial tcp: i/o timeout"))
+	if !errors.Is(err, ErrDeliveryFailed) {
+		t.Fatal("provider error does not match ErrDeliveryFailed")
+	}
+	if err.Error() == ErrDeliveryFailed.Error() {
+		t.Fatal("provider error did not provide an actionable public message")
 	}
 }
