@@ -87,3 +87,26 @@ func TestDeductionRuleInputValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestUnitInputValidation(t *testing.T) {
+	for _, code := range []string{"DIV-12", "SEC_47", "UNIT.01", "A1"} {
+		if !validUnitCode(code) {
+			t.Errorf("valid unit code %q rejected", code)
+		}
+	}
+	for _, code := range []string{"", "A", "-DIV", "div-12", "DIV 12", "DIV/12"} {
+		if validUnitCode(code) {
+			t.Errorf("invalid unit code %q accepted", code)
+		}
+	}
+
+	sortOrder := 10
+	valid := adminUnitInput{Code: "SEC-47", Name: "Seksi Baru", UnitType: "section", ParentID: "00000000-0000-4000-8000-000000000001", SortOrder: &sortOrder}
+	if err := validateAdminUnitInput(valid); err != nil {
+		t.Fatalf("valid unit input rejected: %v", err)
+	}
+	valid.ParentID = ""
+	if err := validateAdminUnitInput(valid); err == nil {
+		t.Fatal("section without a parent was accepted")
+	}
+}

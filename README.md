@@ -21,6 +21,7 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Total potongan pada cakupan kewenangan dan agregat kantor untuk admin.
 - Peringatan individu dan unit dengan parameter yang hanya dapat diubah admin.
 - Admin dapat menambah, memindahkan, menonaktifkan/menghapus, dan mereset password pengguna.
+- Admin dapat menambah, mengubah, memindahkan, menonaktifkan, dan menghapus bidang/bagian maupun seksi/subbagian melalui menu **Struktur Organisasi**.
 - Admin dapat menambah dan mengubah aturan potongan langsung dari Parameter Sistem.
 - Import workbook bulanan dengan validasi format, NIP, tanggal, duplikasi, unit, hash file, staging, dan publikasi atomik.
 - Notifikasi dalam aplikasi, email, dan SMS setelah periode dipublikasikan; email/SMS hanya dijadwalkan untuk kontak terverifikasi dan angka notifikasi dihapus ketika panel notifikasi dibuka.
@@ -49,6 +50,7 @@ Contoh yang diminta juga terpetakan: Heru Prayitno sebagai Kepala Bagian Umum da
    - `supabase/migrations/001_pantas_schema.sql`
    - `supabase/migrations/002_separate_admin_accounts.sql`
    - `supabase/migrations/003_fix_pgcrypto_schema.sql`
+   - `supabase/migrations/004_manage_organization_units.sql`
    - `supabase/seed/002_employees_from_reference.sql`
 3. Salin connection string **Session pooler port 5432** dan tambahkan `sslmode=require` bila belum ada.
 4. Buat repository GitHub **private**, lalu unggah seluruh isi folder ini ke root repository.
@@ -64,9 +66,12 @@ Petunjuk terperinci:
 - [Konfigurasi Render](docs/RENDER.md)
 - [Pengaturan email dan OTP nomor HP](docs/EMAIL_PHONE_SETUP.md)
 - [Upgrade administrator non-pegawai](docs/UPGRADE_ADMIN.md)
+- [Upgrade pengelolaan struktur organisasi V6](docs/UPGRADE_STRUCTURE_V6.md)
 - [Format workbook import](docs/EXCEL_FORMAT.md)
 - [Arsitektur dan matriks akses](docs/ARCHITECTURE.md)
 - [Keamanan dan operasi](docs/SECURITY.md)
+
+Tiga SQL siap pakai juga disertakan pada folder `sql/`: setup database baru, reset data potongan, serta reset data pegawai dan potongan. Dua file reset memiliki pengaman konfirmasi dan harus dijalankan hanya setelah backup.
 
 ## Format Excel import
 

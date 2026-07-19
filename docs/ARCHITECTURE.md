@@ -25,6 +25,8 @@ Go menyajikan API dan aset web dari satu binary. Browser tidak menerima connecti
 
 Administrator adalah akun sistem pada `admin_accounts`, bukan pegawai pada `users`. Akun pegawai tidak dapat diberi hak admin dari menu pengelolaan pengguna. Semua endpoint admin tetap memerlukan principal bertipe admin.
 
+Administrator mengelola bidang/bagian dan seksi/subbagian melalui menu **Struktur Organisasi**. Relasi `units.parent_id` menetapkan bahwa bidang/bagian berada di bawah kantor dan seksi/subbagian berada di bawah tepat satu bidang/bagian. Perubahan induk seksi langsung mengubah cakupan monitoring serta verifikasi atasan. API dan trigger database sama-sama menolak relasi yang tidak valid, penonaktifan unit yang masih memiliki anggota aktif, dan penghapusan unit yang masih memiliki dependensi.
+
 ## Lingkup total monitoring
 
 - Kepala seksi/subbagian: dirinya dan seluruh staf pada unit yang sama.
@@ -60,7 +62,7 @@ Setiap tanggal memiliki status, komentar, dokumen, dan potongan hasil sendiri. P
 ## Model data utama
 
 - `accounts`, `admin_accounts`: identitas autentikasi dan administrator non-pegawai.
-- `units`, `users`, `user_assignment_history`: struktur organisasi, pegawai, dan mutasi.
+- `units`, `users`, `user_assignment_history`: struktur organisasi yang dapat dikelola admin, pegawai, dan mutasi.
 - `reporting_periods`, `import_batches`, `attendance_records`: data bulanan berversi.
 - `appeals`, `appeal_items`, `appeal_documents`: proses banding per hari.
 - `deduction_rules`, `appeal_reason_categories`, `parameters`: konfigurasi admin.

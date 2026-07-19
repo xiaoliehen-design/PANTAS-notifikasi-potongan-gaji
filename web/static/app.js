@@ -322,7 +322,8 @@ function buildNavigation() {
     { id: "monitoring", label: "Monitoring Kantor", icon: "◎" },
     { id: "warnings", label: "Peringatan", icon: "△" },
     { id: "admin-reviews", label: "Keputusan Banding", icon: "◆" },
-    { id: "admin-users", label: "Pengguna & Unit", icon: "◉" },
+    { id: "admin-users", label: "Pengguna", icon: "◉" },
+    { id: "admin-units", label: "Struktur Organisasi", icon: "▦" },
     { id: "admin-imports", label: "Import Data", icon: "⇧" },
     { id: "admin-parameters", label: "Parameter", icon: "⚙" },
     { id: "profile", label: "Profil & Keamanan", icon: "○" },
@@ -389,7 +390,8 @@ async function renderRoute() {
     deductions: ["Transparansi", "Detail Potongan"], appeals: ["Koreksi data", "Banding Saya"],
     profile: ["Akun", "Profil & Keamanan"], monitoring: ["Kepemimpinan", "Monitoring Unit"],
     warnings: ["Deteksi dini", "Peringatan"], reviews: ["Alur banding", "Verifikasi Atasan"],
-    "admin-reviews": ["Alur banding", "Keputusan Administrator"], "admin-users": ["Administrasi", "Pengguna & Unit"],
+    "admin-reviews": ["Alur banding", "Keputusan Administrator"], "admin-users": ["Administrasi", "Pengguna"],
+    "admin-units": ["Administrasi", "Struktur Organisasi"],
     "admin-imports": ["Administrasi", "Import Data Bulanan"], "admin-parameters": ["Administrasi", "Parameter Sistem"],
   };
   const label = labels[route] || ["PANTAS", "Halaman"];
@@ -402,6 +404,7 @@ async function renderRoute() {
       appeals: renderAppeals, profile: renderProfile, monitoring: renderMonitoring,
       warnings: renderWarnings, reviews: context => renderReviews(false, context),
       "admin-reviews": context => renderReviews(true, context), "admin-users": context => renderAdminUsers(1, context),
+      "admin-units": renderAdminUnits,
       "admin-imports": renderAdminImports, "admin-parameters": renderAdminParameters,
     };
     if (!handlers[route]) return navigate("dashboard");
@@ -558,6 +561,119 @@ async function renderAdminUsers(pageNumber = 1, context = activeRouteContext("ad
   $("#user-search").addEventListener("submit", async event => { event.preventDefault(); const q=event.currentTarget.elements.q.value; const result=await routeAPI(`/api/admin/users?q=${encodeURIComponent(q)}&limit=100`,context); $(".table-wrap").outerHTML=adminUserTable(result.items); bindUserActions(); });
   $$('[data-user-page]').forEach(button => button.addEventListener("click", () => renderAdminUsers(Number(button.dataset.userPage), context)));
   bindUserActions();
+}
+
+async function renderAdminUnits(context = activeRouteContext("admin-units")) {
+  const data = await routeAPI("/api/admin/units", context);
+  state.units = data.items;
+  const divisions = data.items.filter(unit => unit.type === "division");
+  const sections = data.items.filter(unit => unit.type === "section");
+  const activeUnits = [...divisions, ...sections].filter(unit => unit.is_active).length;
+  const activeMembers = data.items.reduce((total, unit) => total + Number(unit.members || 0), 0);
+  page.innerHTML = `${pageIntro("Struktur organisasi", "Kelola bidang/bagian, seksi/subbagian, serta hubungan induknya.", `<div class="page-actions"><button class="button button-secondary" data-new-unit="division">+ Bidang/Bagian</button><button class="button button-primary" data-new-unit="section">+ Seksi/Subbagian</button></div>`)}
+    <section class="grid kpi-grid">
+      ${kpi("Bidang / Bagian", numberID(divisions.length), "Unit tingkat pertama", "▦", "")}
+      ${kpi("Seksi / Subbagian", numberID(sections.length), "Terhubung ke bidang induk", "⌘", "kpi-gold")}
+      ${kpi("Unit aktif", numberID(activeUnits), "Bidang dan seksi aktif", "✓", "kpi-green")}
+      ${kpi("Pegawai aktif", numberID(activeMembers), "Ditempatkan pada seluruh unit", "◉", "")}
+    </section>
+    <div class="callout callout-info section-top"><span>i</span><div><strong>Pemetaan file Excel</strong><br>Nama penempatan harus sama dengan kolom penempatan pada workbook. Saat otomatis aktif, PANTAS membentuk format “Bidang - -” atau “Bidang - Seksi”.</div></div>
+    <section class="panel section-top"><div class="panel-header"><div><h3>Bidang / Bagian</h3><p>Berada langsung di bawah unit kantor</p></div><span class="period-pill">${numberID(divisions.length)} unit</span></div>${adminDivisionTable(divisions)}</section>
+    <section class="panel section-top"><div class="panel-header"><div><h3>Seksi / Subbagian</h3><p>Kolom bidang induk menentukan hubungan organisasi dan cakupan atasan</p></div><span class="period-pill">${numberID(sections.length)} unit</span></div>${adminSectionTable(sections)}</section>
+    <div class="callout section-top"><span>!</span><div><strong>Penghapusan dilindungi</strong><br>Unit yang masih memiliki pegawai, seksi anak, atau riwayat mutasi tidak dapat dihapus. Gunakan status nonaktif bila riwayat unit harus tetap dipertahankan.</div></div>`;
+  bindUnitActions();
+}
+
+function bindUnitActions() {
+  $$('[data-new-unit]').forEach(button => button.addEventListener("click", () => openUnitDialog(null, button.dataset.newUnit)));
+  $$('[data-edit-unit]').forEach(button => button.addEventListener("click", () => openUnitDialog(JSON.parse(button.dataset.unit))));
+  $$('[data-delete-unit]').forEach(button => button.addEventListener("click", async () => {
+    const unit = JSON.parse(button.dataset.unit);
+    const kind = unitTypeLabel(unit.type);
+    if (!await confirmAction(`Hapus ${kind.toLowerCase()}?`, `${unit.name} akan dihapus permanen. Tindakan hanya berhasil jika tidak ada pegawai, unit anak, atau riwayat mutasi yang terhubung.`, true)) return;
+    setBusy(button, true, "Menghapus…");
+    try {
+      await api(`/api/admin/units/${unit.id}`, { method: "DELETE" });
+      state.units = null;
+      toast("Unit dihapus", `${unit.name} telah dihapus dari struktur organisasi.`, "success");
+      await renderAdminUnits();
+    } catch (error) {
+      toast("Unit belum dapat dihapus", error.message, "error");
+      setBusy(button, false);
+    }
+  }));
+}
+
+function openUnitDialog(unit, defaultType = "division") {
+  const unitType = unit?.type || defaultType;
+  const currentParent = state.units.find(item => item.id === unit?.parent_id);
+  const suggestedSource = unitSourceSuggestion(unitType, unit?.name || "", currentParent?.name || "");
+  const autoSource = !unit || !unit.source_name || unit.source_name === suggestedSource;
+  const dialog = dynamicDialog(`${unit ? "Ubah" : "Tambah"} ${unitTypeLabel(unitType).toLowerCase()}`, `
+    <form class="stack-lg" id="unit-dialog-form">
+      ${unit ? `<input type="hidden" name="type" value="${h(unitType)}"><div class="callout callout-info"><span>▦</span><div><strong>${h(unitTypeLabel(unitType))}</strong><br>Jenis unit tidak dapat diubah setelah dibuat.</div></div>` : `<label class="field"><span>Jenis unit</span><select name="type"><option value="division" ${unitType==="division"?"selected":""}>Bidang / Bagian</option><option value="section" ${unitType==="section"?"selected":""}>Seksi / Subbagian</option></select></label>`}
+      <div class="form-grid-two">
+        <label class="field"><span>Kode unit</span><input name="code" value="${h(unit?.code || "")}" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,31}" placeholder="Contoh: DIV-12" required></label>
+        <label class="field"><span>Urutan tampilan</span><input name="sort_order" type="number" min="-100000" max="100000" value="${unit ? h(unit.sort_order) : ""}" placeholder="Otomatis"></label>
+      </div>
+      <label class="field"><span>Nama unit</span><input name="name" value="${h(unit?.name || "")}" minlength="2" maxlength="200" placeholder="Nama bidang atau seksi" required></label>
+      <label class="field" data-unit-parent-row ${unitType === "section" ? "" : "hidden"}><span>Bidang / Bagian induk</span><select name="parent_id">${divisionUnitOptions(state.units, unit?.parent_id)}</select><small>Perubahan pilihan ini memindahkan seksi ke bidang yang dipilih.</small></label>
+      <label class="field"><span>Nama penempatan pada Excel</span><input name="source_name" value="${h(unit?.source_name || suggestedSource)}" maxlength="300" placeholder="Harus sama dengan workbook"><small>Digunakan untuk mencocokkan unit pegawai saat preview import.</small></label>
+      <label class="check-row"><input type="checkbox" name="auto_source" ${autoSource ? "checked" : ""}> Sesuaikan nama penempatan Excel secara otomatis</label>
+      <label class="check-row"><input type="checkbox" name="is_active" ${unit?.is_active === false ? "" : "checked"}> Unit aktif</label>
+      <button class="button button-primary" type="submit">Simpan unit</button>
+    </form>`);
+  dialog.classList.add("modal-wide");
+  const form = $("form", dialog);
+  const parentRow = $("[data-unit-parent-row]", form);
+  const sourceInput = form.elements.source_name;
+  const autoInput = form.elements.auto_source;
+  const updateUnitForm = () => {
+    const selectedType = form.elements.type.value;
+    parentRow.hidden = selectedType !== "section";
+    form.elements.parent_id.required = selectedType === "section";
+    if (autoInput.checked) {
+      const parentName = state.units.find(item => item.id === form.elements.parent_id.value)?.name || "";
+      sourceInput.value = unitSourceSuggestion(selectedType, form.elements.name.value, parentName);
+    }
+  };
+  form.elements.type.addEventListener("change", updateUnitForm);
+  form.elements.name.addEventListener("input", updateUnitForm);
+  form.elements.parent_id.addEventListener("change", updateUnitForm);
+  autoInput.addEventListener("change", updateUnitForm);
+  sourceInput.addEventListener("input", () => { autoInput.checked = false; });
+  updateUnitForm();
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!form.checkValidity()) {
+      form.reportValidity();
+      return;
+    }
+    updateUnitForm();
+    const values = formJSON(form);
+    const body = {
+      code: values.code.toUpperCase(),
+      name: values.name,
+      source_name: values.source_name,
+      type: values.type,
+      parent_id: values.type === "section" ? values.parent_id : "",
+      sort_order: values.sort_order === "" ? null : Number(values.sort_order),
+      is_active: form.elements.is_active.checked,
+    };
+    const button = $("button[type=submit]", form);
+    setBusy(button, true, "Menyimpan…");
+    try {
+      await api(unit ? `/api/admin/units/${unit.id}` : "/api/admin/units", { method: unit ? "PATCH" : "POST", body });
+      dialog.close();
+      dialog.remove();
+      state.units = null;
+      toast("Struktur diperbarui", `${body.name} berhasil disimpan.`, "success");
+      await renderAdminUnits();
+    } catch (error) {
+      toast("Unit belum tersimpan", error.message, "error");
+      setBusy(button, false);
+    }
+  });
 }
 
 function bindUserActions() {
@@ -810,6 +926,13 @@ function appealForm(options){return `<form id="appeal-form" class="card-list">${
 function appealHistoryCard(appeal){return `<article class="data-card"><div class="data-card-header"><div><span class="eyebrow">${h(appeal.period_label)}</span><h3>${appeal.items.length} hari diajukan</h3></div>${status(appeal.status)}</div><div class="card-list space-top">${appeal.items.map(item=>`<div class="summary-row"><div><strong>${formatDate(item.date)}</strong><small class="block">${h(item.reason)} · ${statusText(item.admin_status)}</small><div data-document-list></div></div><div class="text-right"><span class="rate">${percent(item.original)} → ${percent(item.adjusted)}</span>${item.document_count?`<button class="link-button block" data-documents="${item.id}">${item.document_count} dokumen</button>`:""}</div></div>`).join("")}</div></article>`;}
 function reviewCard(item,admin){return `<article class="data-card review-card"><div class="data-card-header"><div><span class="eyebrow">${h(item.period)} · ${formatDate(item.date)}</span><h3>${h(item.name)}</h3><p>${h(item.nip)} · ${h(item.unit)}</p></div><span class="rate">${percent(item.rate)}</span></div><div><span class="code-chip">${h(item.reason)}</span><p>${h(item.explanation)}</p></div>${item.document_count?`<div><button class="button button-small button-ghost" data-documents="${item.id}">Buka ${item.document_count} dokumen</button><div data-document-list class="page-actions space-top"></div></div>`:""}${admin?`<div class="callout callout-info"><span>✓</span><div><strong>Verifikasi atasan: ${h(statusText(item.supervisor_status))}</strong><br>${h(item.supervisor_comment||"Tanpa komentar")}</div></div>`:""}<div class="review-actions"><label class="field"><span>Komentar (opsional)</span><textarea maxlength="2000" placeholder="Catatan keputusan…"></textarea></label>${admin?`<label class="field"><span>Potongan hasil jika disetujui (%)</span><input name="adjusted_rate" type="number" min="0" max="${item.rate*100}" step="0.01" value="0"></label>`:""}<div class="review-buttons"><button class="button button-danger" data-review-submit="${item.id}" data-decision="${admin?"rejected":"rejected"}">Tolak</button><button class="button button-primary" data-review-submit="${item.id}" data-decision="${admin?"approved":"accepted"}">${admin?"Setujui":"Terima verifikasi"}</button></div></div></article>`;}
 function adminUserTable(items){return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Nama / NIP</th><th>Unit</th><th>Jabatan</th><th>Status</th><th>Kontak</th><th></th></tr></thead><tbody>${items.map(user=>`<tr><td><strong>${h(user.name)}</strong><br><small>${h(user.nip)}</small></td><td>${h(user.unit_name)}</td><td>${h(roleLabel(user.role))}</td><td>${status(user.is_active?"active":"inactive")}${user.must_change_password?`<br><small>password awal</small>`:""}</td><td>${user.email_verified?"Email ✓":"—"}${user.phone_verified?" · HP ✓":""}</td><td><div class="page-actions"><button class="button button-small button-ghost" data-edit-user data-user='${attributeJSON(user)}'>Ubah</button><button class="button button-small button-ghost" data-reset-user="${user.id}">Reset</button><button class="button button-small button-ghost" data-delete-user="${user.id}">Hapus</button></div></td></tr>`).join("")}</tbody></table></div>`;}
+function adminDivisionTable(items){if(!items.length)return emptyState("▦","Belum ada bidang/bagian","Tambahkan unit tingkat pertama untuk mulai menyusun struktur organisasi.");return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Unit</th><th>Nama penempatan Excel</th><th class="number">Seksi</th><th>Pegawai</th><th>Status</th><th></th></tr></thead><tbody>${items.map(unit=>`<tr><td><strong>${h(unit.name)}</strong><br><span class="code-chip">${h(unit.code)}</span></td><td><span class="unit-source">${h(unit.source_name||"—")}</span></td><td class="number">${numberID(unit.child_units)}</td><td>${unitMemberSummary(unit)}</td><td>${status(unit.is_active?"active":"inactive")}</td><td>${unitActionButtons(unit)}</td></tr>`).join("")}</tbody></table></div>`;}
+function adminSectionTable(items){if(!items.length)return emptyState("⌘","Belum ada seksi/subbagian","Tambahkan seksi lalu pilih bidang/bagian induknya.");return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Unit</th><th>Bidang / Bagian induk</th><th>Nama penempatan Excel</th><th>Pegawai</th><th>Status</th><th></th></tr></thead><tbody>${items.map(unit=>`<tr><td><strong>${h(unit.name)}</strong><br><span class="code-chip">${h(unit.code)}</span></td><td><span class="unit-parent">↳ ${h(unit.parent_name||"Belum terhubung")}</span></td><td><span class="unit-source">${h(unit.source_name||"—")}</span></td><td>${unitMemberSummary(unit)}</td><td>${status(unit.is_active?"active":"inactive")}</td><td>${unitActionButtons(unit)}</td></tr>`).join("")}</tbody></table></div>`;}
+function unitActionButtons(unit){return `<div class="page-actions"><button class="button button-small button-ghost" data-edit-unit data-unit='${attributeJSON(unit)}'>Ubah</button><button class="button button-small button-ghost danger-link" data-delete-unit data-unit='${attributeJSON(unit)}'>Hapus</button></div>`;}
+function unitMemberSummary(unit){const active=Number(unit.members||0);const total=Number(unit.total_members||0);return `<strong>${numberID(active)} aktif</strong>${total>active?`<small class="block muted">${numberID(total)} seluruh catatan</small>`:""}`;}
+function unitTypeLabel(value){return value==="division"?"Bidang / Bagian":value==="section"?"Seksi / Subbagian":value==="office"?"Kantor":"Fungsional";}
+function divisionUnitOptions(units,selected){const divisions=units.filter(unit=>unit.type==="division"&&(unit.is_active||unit.id===selected));return `<option value="">Pilih bidang/bagian</option>${divisions.map(unit=>`<option value="${unit.id}" ${unit.id===selected?"selected":""}>${h(unit.name)}${unit.is_active?"":" · nonaktif"}</option>`).join("")}`;}
+function unitSourceSuggestion(type,name,parentName){const cleanName=String(name||"").trim();if(!cleanName)return"";return type==="section"&&parentName?`${String(parentName).trim()} - ${cleanName}`:`${cleanName} - -`;}
 function importCard(item){return `<article class="data-card"><div class="data-card-header"><div><span class="eyebrow">Versi ${item.version}</span><h4>${h(item.label)}</h4></div>${status(item.status)}</div><p>${h(item.filename)}</p><div class="card-meta"><span>${numberID(item.rows)} baris</span><span>· ${numberID(item.employees)} pegawai</span><span>· ${h(item.integrity)}</span></div>${item.status==="draft"?`<div class="page-actions space-top"><button class="button button-small button-primary" data-publish-import="${item.id}">Publikasikan</button><button class="button button-small button-ghost" data-reject-import="${item.id}">Batalkan</button></div>`:""}</article>`;}
 function importPreview(p){const ready=p.ready_to_publish;return `<div class="callout ${ready?"callout-info":"callout-danger"} section-top"><span>${ready?"✓":"!"}</span><div><strong>${ready?"Validasi berhasil":"Perlu perbaikan"}</strong><br>${h(p.period_label)} · ${h(p.integrity_status)}</div></div><div class="preview-grid">${previewStat("Baris aktif",numberID(p.rows))}${previewStat("Pegawai",numberID(p.employees))}${previewStat("Hari potongan",numberID(p.deduction_days))}${previewStat("Total akumulasi",percent(p.total_deduction))}${previewStat("Baris kosong diabaikan",numberID(p.blank_rows_ignored))}${previewStat("Beda unit",numberID(p.unit_mismatches?.length||0))}</div>${p.warnings?.length?`<div class="callout"><span>i</span><div>${p.warnings.map(h).join("<br>")}</div></div>`:""}${p.missing_users?.length?`<div class="callout callout-danger"><span>!</span><div><strong>${p.missing_users.length} NIP belum terdaftar</strong><br>${p.missing_users.slice(0,8).map(x=>`${h(x.name)} (${h(x.nip)})`).join("<br>")}</div></div>`:""}${ready?`<button class="button button-primary button-full section-top" data-publish-import="${p.batch_id}">Publikasikan ${h(p.period_label)}</button>`:""}`;}
 function previewStat(label,value){return `<div class="preview-stat"><small>${h(label)}</small><strong>${h(String(value))}</strong></div>`;}
@@ -817,7 +940,7 @@ function parameterCard(item){return `<article class="data-card setting-card"><di
 function ruleRow(item){return `<tr><td>${h(item.source)}</td><td><span class="code-chip">${h(item.code)}</span></td><td><input class="table-input" name="label" value="${h(item.label)}"></td><td><input class="table-input" name="rate" type="number" min="0" max="100" step="0.01" value="${item.rate*100}">%</td><td><input name="active" type="checkbox" ${item.is_active?"checked":""}></td><td><button class="button button-small button-secondary" data-save-rule="${item.id}">Simpan</button></td></tr>`;}
 function reasonRow(item){return `<tr><td>${h(item.code)}</td><td>${h(item.label)}</td><td>${h(item.description)}</td><td>${status(item.is_active?"active":"inactive")}</td><td><button class="button button-small button-ghost" data-edit-reason data-reason='${attributeJSON(item)}'>Ubah</button></td></tr>`;}
 function notificationItem(item){const action=item.action_url||"";return `<article class="notification-item ${item.read?"":"unread"} ${action?"notification-action":""}" data-notification="${item.id}" data-action="${h(action)}" ${action?'role="button" tabindex="0"':""}><h4>${h(item.title)}</h4><p>${h(item.body)}</p><time>${formatDateTime(item.created_at)}</time>${action?'<span class="notification-open">Buka →</span>':""}</article>`;}
-function unitOptions(units,selected){return units.filter(u=>u.is_active).map(u=>`<option value="${u.id}" ${u.id===selected?"selected":""}>${h(u.name)} · ${h(u.type)}</option>`).join("");}
+function unitOptions(units,selected){return units.filter(u=>u.is_active||u.id===selected).map(u=>`<option value="${u.id}" ${u.id===selected?"selected":""}>${h(u.name)} · ${h(unitTypeLabel(u.type))}${u.is_active?"":" · nonaktif"}</option>`).join("");}
 function roleOptions(selected){return [["staff","Staf"],["section_head","Kepala Seksi/Subbagian"],["division_head","Kepala Bidang/Bagian"],["office_head","Kepala Kantor"],["functional","Fungsional"]].map(([value,label])=>`<option value="${value}" ${value===selected?"selected":""}>${label}</option>`).join("");}
 function status(value){return `<span class="status status-${h(value)}">${h(statusText(value))}</span>`;}
 function statusText(value){return ({pending:"Menunggu",accepted:"Diterima",approved:"Disetujui",rejected:"Ditolak",submitted:"Diajukan",supervisor_review:"Verifikasi atasan",admin_review:"Keputusan admin",finalized:"Selesai",published:"Dipublikasikan",draft:"Draft",superseded:"Diganti",active:"Aktif",inactive:"Nonaktif"})[value]||value||"—";}

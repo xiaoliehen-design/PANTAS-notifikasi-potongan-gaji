@@ -237,7 +237,9 @@ func (a *App) adminUnits(response http.ResponseWriter, request *http.Request, _ 
 	rows, err := a.pool.Query(request.Context(), `
 		select u.id::text, u.code, u.name, coalesce(u.source_name, ''), u.unit_type,
 		       coalesce(u.parent_id::text, ''), coalesce(p.name, ''), u.sort_order, u.is_active,
-		       (select count(*) from public.users x where x.unit_id = u.id and x.is_active and x.deleted_at is null)
+		       (select count(*) from public.users x where x.unit_id = u.id and x.is_active and x.deleted_at is null),
+		       (select count(*) from public.users x where x.unit_id = u.id),
+		       (select count(*) from public.units c where c.parent_id = u.id)
 		from public.units u left join public.units p on p.id = u.parent_id
 		order by coalesce(p.sort_order, u.sort_order), u.unit_type, u.sort_order, u.name`)
 	if err != nil {
@@ -248,15 +250,345 @@ func (a *App) adminUnits(response http.ResponseWriter, request *http.Request, _ 
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, code, name, source, unitType, parentID, parentName string
-		var order, members int
+		var order, members, totalMembers, childUnits int
 		var active bool
-		if err := rows.Scan(&id, &code, &name, &source, &unitType, &parentID, &parentName, &order, &active, &members); err != nil {
+		if err := rows.Scan(&id, &code, &name, &source, &unitType, &parentID, &parentName, &order, &active, &members, &totalMembers, &childUnits); err != nil {
 			a.internalError(response, "admin unit scan", err)
 			return
 		}
-		items = append(items, map[string]any{"id": id, "code": code, "name": name, "source_name": source, "type": unitType, "parent_id": parentID, "parent_name": parentName, "sort_order": order, "is_active": active, "members": members})
+		items = append(items, map[string]any{
+			"id": id, "code": code, "name": name, "source_name": source,
+			"type": unitType, "parent_id": parentID, "parent_name": parentName,
+			"sort_order": order, "is_active": active, "members": members,
+			"total_members": totalMembers, "child_units": childUnits,
+		})
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"items": items})
+}
+
+type adminUnitInput struct {
+	Code       string `json:"code"`
+	Name       string `json:"name"`
+	SourceName string `json:"source_name"`
+	UnitType   string `json:"type"`
+	ParentID   string `json:"parent_id"`
+	SortOrder  *int   `json:"sort_order"`
+	IsActive   *bool  `json:"is_active"`
+}
+
+func (a *App) adminCreateUnit(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
+	var input adminUnitInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	normalizeAdminUnitInput(&input)
+	if err := validateAdminUnitInput(input); err != nil {
+		writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_unit")
+		return
+	}
+
+	active := true
+	if input.IsActive != nil {
+		active = *input.IsActive
+	}
+	tx, err := a.pool.BeginTx(request.Context(), pgx.TxOptions{})
+	if err != nil {
+		a.internalError(response, "create unit begin", err)
+		return
+	}
+	defer tx.Rollback(request.Context())
+
+	parentID, err := a.resolveUnitParentTx(request, tx, input.UnitType, input.ParentID, active)
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_unit_parent")
+		return
+	}
+	sortOrder := 0
+	if input.SortOrder == nil {
+		if err := tx.QueryRow(request.Context(), `
+			select coalesce(max(sort_order), 0) + 10
+			from public.units where unit_type = $1 and parent_id = $2`, input.UnitType, parentID).Scan(&sortOrder); err != nil {
+			a.internalError(response, "unit next order", err)
+			return
+		}
+	} else {
+		sortOrder = *input.SortOrder
+	}
+
+	var id string
+	err = tx.QueryRow(request.Context(), `
+		insert into public.units (code, name, source_name, unit_type, parent_id, sort_order, is_active)
+		values ($1, $2, nullif($3, ''), $4, $5, $6, $7)
+		returning id::text`, input.Code, input.Name, input.SourceName, input.UnitType, parentID, sortOrder, active).Scan(&id)
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(response, http.StatusConflict, "Kode atau nama penempatan Excel sudah digunakan unit lain.", "unit_conflict")
+			return
+		}
+		a.internalError(response, "unit create", err)
+		return
+	}
+	if err := tx.Commit(request.Context()); err != nil {
+		a.internalError(response, "unit create commit", err)
+		return
+	}
+	a.audit(request, actor.ID, "unit.create", "unit", id, map[string]any{
+		"code": input.Code, "name": input.Name, "source_name": input.SourceName,
+		"type": input.UnitType, "parent_id": parentID, "sort_order": sortOrder, "active": active,
+	})
+	writeJSON(response, http.StatusCreated, map[string]any{"id": id, "message": "Unit organisasi ditambahkan."})
+}
+
+func (a *App) adminUpdateUnit(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
+	id := request.PathValue("id")
+	var input adminUnitInput
+	if !validUUID(id) {
+		writeError(response, http.StatusBadRequest, "Unit tidak valid.", "invalid_id")
+		return
+	}
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	normalizeAdminUnitInput(&input)
+	if err := validateAdminUnitInput(input); err != nil {
+		writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_unit")
+		return
+	}
+
+	tx, err := a.pool.BeginTx(request.Context(), pgx.TxOptions{})
+	if err != nil {
+		a.internalError(response, "update unit begin", err)
+		return
+	}
+	defer tx.Rollback(request.Context())
+	var currentType string
+	err = tx.QueryRow(request.Context(), `select unit_type from public.units where id = $1 for update`, id).Scan(&currentType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(response, http.StatusNotFound, "Unit tidak ditemukan.", "not_found")
+		return
+	}
+	if err != nil {
+		a.internalError(response, "unit update lookup", err)
+		return
+	}
+	if currentType != "division" && currentType != "section" {
+		writeError(response, http.StatusForbidden, "Unit kantor dan Fungsional merupakan unit sistem dan tidak dapat diubah dari menu ini.", "protected_unit")
+		return
+	}
+	if input.UnitType != currentType {
+		writeError(response, http.StatusUnprocessableEntity, "Jenis unit tidak dapat diubah setelah unit dibuat.", "unit_type_immutable")
+		return
+	}
+
+	active := true
+	if input.IsActive != nil {
+		active = *input.IsActive
+	}
+	parentID, err := a.resolveUnitParentTx(request, tx, input.UnitType, input.ParentID, active)
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, err.Error(), "invalid_unit_parent")
+		return
+	}
+	if !active {
+		var activeMembers, activeChildren int
+		if err := tx.QueryRow(request.Context(), `
+			select
+			  (select count(*) from public.users where unit_id = $1 and is_active and deleted_at is null),
+			  (select count(*) from public.units where parent_id = $1 and is_active)`, id).Scan(&activeMembers, &activeChildren); err != nil {
+			a.internalError(response, "unit deactivate dependencies", err)
+			return
+		}
+		if activeMembers > 0 {
+			writeError(response, http.StatusConflict, "Unit masih memiliki pegawai aktif. Pindahkan atau nonaktifkan pegawai terlebih dahulu.", "unit_has_active_members")
+			return
+		}
+		if activeChildren > 0 {
+			writeError(response, http.StatusConflict, "Bidang/bagian masih memiliki seksi aktif. Nonaktifkan seksi terlebih dahulu.", "unit_has_active_children")
+			return
+		}
+	}
+
+	sortOrder := 0
+	if input.SortOrder != nil {
+		sortOrder = *input.SortOrder
+	} else if err := tx.QueryRow(request.Context(), `select sort_order from public.units where id = $1`, id).Scan(&sortOrder); err != nil {
+		a.internalError(response, "unit current order", err)
+		return
+	}
+	_, err = tx.Exec(request.Context(), `
+		update public.units
+		set code = $2, name = $3, source_name = nullif($4, ''), parent_id = $5,
+		    sort_order = $6, is_active = $7
+		where id = $1`, id, input.Code, input.Name, input.SourceName, parentID, sortOrder, active)
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(response, http.StatusConflict, "Kode atau nama penempatan Excel sudah digunakan unit lain.", "unit_conflict")
+			return
+		}
+		a.internalError(response, "unit update", err)
+		return
+	}
+	if err := tx.Commit(request.Context()); err != nil {
+		a.internalError(response, "unit update commit", err)
+		return
+	}
+	a.audit(request, actor.ID, "unit.update", "unit", id, map[string]any{
+		"code": input.Code, "name": input.Name, "source_name": input.SourceName,
+		"type": input.UnitType, "parent_id": parentID, "sort_order": sortOrder, "active": active,
+	})
+	writeJSON(response, http.StatusOK, map[string]any{"message": "Unit organisasi diperbarui."})
+}
+
+func (a *App) adminDeleteUnit(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
+	id := request.PathValue("id")
+	if !validUUID(id) {
+		writeError(response, http.StatusBadRequest, "Unit tidak valid.", "invalid_id")
+		return
+	}
+	tx, err := a.pool.BeginTx(request.Context(), pgx.TxOptions{})
+	if err != nil {
+		a.internalError(response, "delete unit begin", err)
+		return
+	}
+	defer tx.Rollback(request.Context())
+
+	var unitType, code, name string
+	err = tx.QueryRow(request.Context(), `select unit_type, code, name from public.units where id = $1 for update`, id).Scan(&unitType, &code, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(response, http.StatusNotFound, "Unit tidak ditemukan.", "not_found")
+		return
+	}
+	if err != nil {
+		a.internalError(response, "unit delete lookup", err)
+		return
+	}
+	if unitType != "division" && unitType != "section" {
+		writeError(response, http.StatusForbidden, "Unit kantor dan Fungsional merupakan unit sistem dan tidak dapat dihapus.", "protected_unit")
+		return
+	}
+
+	var members, children, assignments int
+	err = tx.QueryRow(request.Context(), `
+		select
+		  (select count(*) from public.users where unit_id = $1),
+		  (select count(*) from public.units where parent_id = $1),
+		  (select count(*) from public.user_assignment_history where previous_unit_id = $1 or new_unit_id = $1)`, id).Scan(&members, &children, &assignments)
+	if err != nil {
+		a.internalError(response, "unit delete dependencies", err)
+		return
+	}
+	if members > 0 {
+		writeError(response, http.StatusConflict, "Unit masih terhubung ke data pegawai, termasuk akun nonaktif. Pindahkan data pegawai terlebih dahulu.", "unit_has_members")
+		return
+	}
+	if children > 0 {
+		writeError(response, http.StatusConflict, "Bidang/bagian masih memiliki seksi. Pindahkan atau hapus seluruh seksi terlebih dahulu.", "unit_has_children")
+		return
+	}
+	if assignments > 0 {
+		writeError(response, http.StatusConflict, "Unit memiliki riwayat mutasi pegawai sehingga tidak boleh dihapus. Nonaktifkan unit sebagai gantinya.", "unit_has_assignment_history")
+		return
+	}
+	if _, err := tx.Exec(request.Context(), `delete from public.units where id = $1`, id); err != nil {
+		a.internalError(response, "unit delete", err)
+		return
+	}
+	if err := tx.Commit(request.Context()); err != nil {
+		a.internalError(response, "unit delete commit", err)
+		return
+	}
+	a.audit(request, actor.ID, "unit.delete", "unit", id, map[string]any{"code": code, "name": name, "type": unitType})
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func normalizeAdminUnitInput(input *adminUnitInput) {
+	input.Code = strings.ToUpper(strings.TrimSpace(input.Code))
+	input.Name = strings.TrimSpace(input.Name)
+	input.SourceName = strings.TrimSpace(input.SourceName)
+	input.UnitType = strings.ToLower(strings.TrimSpace(input.UnitType))
+	input.ParentID = strings.TrimSpace(input.ParentID)
+}
+
+func validateAdminUnitInput(input adminUnitInput) error {
+	if !validUnitCode(input.Code) {
+		return errors.New("Kode unit harus 2–32 karakter dan hanya boleh berisi huruf, angka, titik, garis bawah, atau tanda hubung")
+	}
+	nameLength := len([]rune(input.Name))
+	if nameLength < 2 || nameLength > 200 {
+		return errors.New("Nama unit harus terdiri dari 2–200 karakter")
+	}
+	if len([]rune(input.SourceName)) > 300 {
+		return errors.New("Nama penempatan Excel maksimal 300 karakter")
+	}
+	if input.UnitType != "division" && input.UnitType != "section" {
+		return errors.New("Jenis unit harus bidang/bagian atau seksi/subbagian")
+	}
+	if input.UnitType == "section" && !validUUID(input.ParentID) {
+		return errors.New("Seksi/subbagian wajib memiliki bidang/bagian induk")
+	}
+	if input.SortOrder != nil && (*input.SortOrder < -100000 || *input.SortOrder > 100000) {
+		return errors.New("Urutan unit berada di luar rentang yang diizinkan")
+	}
+	return nil
+}
+
+func validUnitCode(value string) bool {
+	length := len(value)
+	if length < 2 || length > 32 {
+		return false
+	}
+	for index, char := range value {
+		if (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		if index > 0 && (char == '.' || char == '_' || char == '-') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (a *App) resolveUnitParentTx(request *http.Request, tx pgx.Tx, unitType, requestedParentID string, active bool) (string, error) {
+	if unitType == "division" {
+		var parentID string
+		var parentActive bool
+		err := tx.QueryRow(request.Context(), `
+			select id::text, is_active from public.units
+			where unit_type = 'office' order by sort_order, id limit 1`).Scan(&parentID, &parentActive)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("Unit kantor induk belum tersedia")
+		}
+		if err != nil {
+			return "", err
+		}
+		if requestedParentID != "" && requestedParentID != parentID {
+			return "", errors.New("Bidang/bagian harus berada langsung di bawah unit kantor")
+		}
+		if active && !parentActive {
+			return "", errors.New("Unit kantor induk sedang nonaktif")
+		}
+		return parentID, nil
+	}
+
+	var parentActive bool
+	err := tx.QueryRow(request.Context(), `
+		select is_active from public.units where id = $1 and unit_type = 'division'`, requestedParentID).Scan(&parentActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("Bidang/bagian induk tidak ditemukan")
+	}
+	if err != nil {
+		return "", err
+	}
+	if active && !parentActive {
+		return "", errors.New("Seksi/subbagian aktif harus berada pada bidang/bagian yang aktif")
+	}
+	return requestedParentID, nil
+}
+
+func isUniqueViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) && databaseError.Code == "23505"
 }
 
 func (a *App) adminParameters(response http.ResponseWriter, request *http.Request, _ auth.Principal) {
