@@ -5,6 +5,7 @@ const state = {
   route: "dashboard",
   dashboard: null,
   units: null,
+  unreadNotifications: 0,
   sidebarCollapsed: readSidebarPreference(),
 };
 
@@ -507,8 +508,13 @@ async function renderProfile(){
 
 function openContactDialog(channel) {
   const label = channel === "email" ? "Email" : "Nomor HP";
-  const dialog = dynamicDialog(`Verifikasi ${label}`, `<form class="stack-lg" data-contact-start><label class="field"><span>${label} baru</span><input name="destination" type="${channel === "email" ? "email" : "tel"}" required></label><label class="field"><span>Password saat ini</span><input name="current_password" type="password" required></label><button class="button button-primary">Kirim kode</button></form>`);
+  const destinationHint = channel === "email" ? "Kode dikirim ke kotak masuk email ini." : "Gunakan 08… atau +628…; kode dikirim melalui layanan SMS yang disiapkan administrator.";
+  const dialog = dynamicDialog(`Verifikasi ${label}`, `<form class="stack-lg" data-contact-start><label class="field"><span>${label} baru</span><input name="destination" type="${channel === "email" ? "email" : "tel"}" ${channel === "phone" ? 'inputmode="tel" placeholder="0812… atau +62812…"' : 'autocomplete="email"'} required><small>${destinationHint}</small></label><label class="field"><span>Password PANTAS saat ini</span><span class="password-wrap"><input name="current_password" type="password" autocomplete="current-password" required><button class="icon-button dialog-password-toggle" type="button" aria-label="Tampilkan password">◉</button></span><small>Masukkan password yang sama dengan yang digunakan untuk login, bukan password email.</small></label><button class="button button-primary">Kirim kode</button></form>`);
   const startForm = $("[data-contact-start]", dialog);
+  $(".dialog-password-toggle", startForm).addEventListener("click", event => {
+    const input = event.currentTarget.closest(".password-wrap").querySelector("input");
+    input.type = input.type === "password" ? "text" : "password";
+  });
   startForm.addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -540,7 +546,8 @@ function openContactDialog(channel) {
         }
       });
     } catch (error) {
-      toast("Belum dapat mengirim", error.message, "error");
+      const title = error.code === "current_password_invalid" ? "Password PANTAS salah" : error.code === "delivery_unavailable" ? "Pengiriman belum disiapkan" : "Belum dapat mengirim kode";
+      toast(title, error.message, "error");
       if (error.code === "current_password_invalid" && form.isConnected) {
         form.elements.current_password.value = "";
         form.elements.current_password.setAttribute("aria-invalid", "true");
@@ -552,7 +559,44 @@ function openContactDialog(channel) {
   });
 }
 
-async function openNotifications(){const drawer=$("#notification-drawer");drawer.hidden=false;$("#drawer-backdrop").hidden=false;const data=await api("/api/notifications");$("#notification-list").innerHTML=data.items.length?data.items.map(notificationItem).join(""):emptyState("♢","Belum ada notifikasi","");$$('[data-notification]',drawer).forEach(item=>item.addEventListener("click",async()=>{if(!item.classList.contains("unread"))return;await api(`/api/notifications/${item.dataset.notification}/read`,{method:"POST"});item.classList.remove("unread");}));}
+async function openNotifications(){
+  const drawer=$("#notification-drawer");
+  drawer.hidden=false;
+  $("#drawer-backdrop").hidden=false;
+  const previousUnread=state.unreadNotifications;
+  updateNotificationBadge(0);
+  try{
+    const data=await api("/api/notifications");
+    $("#notification-list").innerHTML=data.items.length?data.items.map(notificationItem).join(""):emptyState("♢","Belum ada notifikasi","");
+    if(data.items.some(item=>!item.read)){
+      try{
+        await api("/api/notifications/read-all",{method:"POST"});
+        $$('.notification-item.unread',drawer).forEach(item=>item.classList.remove("unread"));
+      }catch(error){
+        updateNotificationBadge(previousUnread);
+        toast("Status notifikasi belum tersimpan",error.message,"error");
+      }
+    }
+    $$('[data-notification]',drawer).forEach(item=>{
+      const openItem=async()=>{
+      if(item.classList.contains("unread")){
+        try{
+          await api(`/api/notifications/${item.dataset.notification}/read`,{method:"POST"});
+          item.classList.remove("unread");
+          updateNotificationBadge(Math.max(0,state.unreadNotifications-1));
+        }catch(error){toast("Notifikasi belum ditandai dibaca",error.message,"error");return;}
+      }
+      const action=item.dataset.action;
+      if(action&&(action.startsWith("/")||action.startsWith("#"))){closeNotifications();window.location.assign(action);}
+      };
+      item.addEventListener("click",openItem);
+      item.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openItem();}});
+    });
+  }catch(error){
+    updateNotificationBadge(previousUnread);
+    $("#notification-list").innerHTML=errorState(error.message);
+  }
+}
 function closeNotifications(){$("#notification-drawer").hidden=true;$("#drawer-backdrop").hidden=true;}
 
 async function revealDocuments(button){const target=button.parentElement.querySelector("[data-document-list]");if(!target)return;try{const data=await api(`/api/appeals/items/${button.dataset.documents}/documents`);target.innerHTML=data.items.length?data.items.map(item=>`<a class="button button-small button-ghost" href="/api/documents/${item.id}" target="_blank" rel="noopener">${h(item.filename)} · ${fileSize(item.size)}</a>`).join(""):"<small>Tidak ada dokumen.</small>";}catch(error){toast("Dokumen belum dapat dibuka",error.message,"error");}}
@@ -583,7 +627,7 @@ function previewStat(label,value){return `<div class="preview-stat"><small>${h(l
 function parameterCard(item){return `<article class="data-card setting-card"><div><h4>${h(item.label)}</h4><p>${h(item.description)}</p><small>${h(item.key)} · ${h(item.value_type)}</small></div><input class="table-input" value="${h(JSON.stringify(item.value))}" aria-label="${h(item.label)}"><button class="button button-small button-secondary" data-save-parameter="${h(item.key)}">Simpan</button></article>`;}
 function ruleRow(item){return `<tr><td>${h(item.source)}</td><td><span class="code-chip">${h(item.code)}</span></td><td><input class="table-input" name="label" value="${h(item.label)}"></td><td><input class="table-input" name="rate" type="number" min="0" max="100" step="0.01" value="${item.rate*100}">%</td><td><input name="active" type="checkbox" ${item.is_active?"checked":""}></td><td><button class="button button-small button-secondary" data-save-rule="${item.id}">Simpan</button></td></tr>`;}
 function reasonRow(item){return `<tr><td>${h(item.code)}</td><td>${h(item.label)}</td><td>${h(item.description)}</td><td>${status(item.is_active?"active":"inactive")}</td><td><button class="button button-small button-ghost" data-edit-reason data-reason='${attributeJSON(item)}'>Ubah</button></td></tr>`;}
-function notificationItem(item){return `<article class="notification-item ${item.read?"":"unread"}" data-notification="${item.id}"><h4>${h(item.title)}</h4><p>${h(item.body)}</p><time>${formatDateTime(item.created_at)}</time></article>`;}
+function notificationItem(item){const action=item.action_url||"";return `<article class="notification-item ${item.read?"":"unread"} ${action?"notification-action":""}" data-notification="${item.id}" data-action="${h(action)}" ${action?'role="button" tabindex="0"':""}><h4>${h(item.title)}</h4><p>${h(item.body)}</p><time>${formatDateTime(item.created_at)}</time>${action?'<span class="notification-open">Buka →</span>':""}</article>`;}
 function unitOptions(units,selected){return units.filter(u=>u.is_active).map(u=>`<option value="${u.id}" ${u.id===selected?"selected":""}>${h(u.name)} · ${h(u.type)}</option>`).join("");}
 function roleOptions(selected){return [["staff","Staf"],["section_head","Kepala Seksi/Subbagian"],["division_head","Kepala Bidang/Bagian"],["office_head","Kepala Kantor"],["functional","Fungsional"]].map(([value,label])=>`<option value="${value}" ${value===selected?"selected":""}>${label}</option>`).join("");}
 function status(value){return `<span class="status status-${h(value)}">${h(statusText(value))}</span>`;}
@@ -620,5 +664,5 @@ function shortMonth(label){return label.split(" ")[0].slice(0,3);}
 function fileSize(value){return value>1048576?`${(value/1048576).toFixed(1)} MB`:`${Math.ceil(value/1024)} KB`;}
 function getInitials(name){return String(name).split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]).join("");}
 function firstName(name){return String(name).split(/\s+/)[0];}
-function updateNotificationBadge(count){const badge=$("#notification-badge");badge.hidden=!count;badge.textContent=count>99?"99+":count;}
+function updateNotificationBadge(count){const value=Math.max(0,Number(count)||0);state.unreadNotifications=value;const badge=$("#notification-badge");badge.hidden=!value;badge.textContent=value>99?"99+":value;}
 function isSupervisor(){return state.user?.is_admin||["section_head","division_head","office_head"].includes(state.user?.position_role);}

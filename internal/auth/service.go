@@ -492,6 +492,13 @@ func (s *Service) StartContactChange(ctx context.Context, principal Principal, c
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
+		update public.notification_jobs
+		set status = 'cancelled', locked_at = null, last_error = 'digantikan permintaan OTP yang lebih baru'
+		where user_id = $1 and channel = $2 and template_code = 'contact_otp'
+		  and status in ('pending', 'processing')`, principal.ID, channel); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
 		insert into public.pending_contact_changes (user_id, channel, destination, otp_hash, expires_at)
 		values ($1, $2, $3, $4, now() + interval '10 minutes')`, principal.ID, channel, destination, hash); err != nil {
 		return err
@@ -665,15 +672,22 @@ func (s *Service) createAndQueueOTP(ctx context.Context, userID, name, purpose, 
 		where user_id = $1 and purpose = $2 and channel = $3 and consumed_at is null`, userID, purpose, channel); err != nil {
 		return err
 	}
+	template := "password_otp"
+	if purpose != "password_reset" {
+		template = "contact_otp"
+	}
+	if _, err := tx.Exec(ctx, `
+		update public.notification_jobs
+		set status = 'cancelled', locked_at = null, last_error = 'digantikan permintaan OTP yang lebih baru'
+		where user_id = $1 and channel = $2 and template_code = $3
+		  and status in ('pending', 'processing')`, userID, channel, template); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.recovery_otps (user_id, purpose, channel, destination, otp_hash, requested_ip, expires_at)
 		values ($1, $2, $3, $4, $5, nullif($6, '')::inet, now() + interval '10 minutes')`,
 		userID, purpose, channel, destination, hash, ip); err != nil {
 		return err
-	}
-	template := "password_otp"
-	if purpose != "password_reset" {
-		template = "contact_otp"
 	}
 	jobID, err := mailer.QueueImmediate(ctx, tx, &userID, channel, destination, template, map[string]any{"name": name, "otp": otp})
 	if err != nil {

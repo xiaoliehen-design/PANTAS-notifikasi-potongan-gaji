@@ -295,9 +295,12 @@ a { color: inherit; }
 .notification-list { display: grid; gap: 8px; }
 .notification-item { padding: 14px; border: 1px solid var(--slate-200); border-radius: 12px; background: var(--slate-100); }
 .notification-item.unread { border-color: #b9ddf2; background: var(--blue-100); }
+.notification-item.notification-action { cursor: pointer; transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
+.notification-item.notification-action:hover, .notification-item.notification-action:focus-visible { border-color: var(--blue-500); box-shadow: 0 8px 24px rgba(20,121,191,.12); outline: none; transform: translateY(-1px); }
 .notification-item h4 { margin: 0; font-size: 12px; }
 .notification-item p { margin: 5px 0; color: var(--slate-500); font-size: 11px; line-height: 1.5; }
 .notification-item time { color: var(--slate-500); font-size: 9px; }
+.notification-open { float: right; color: var(--blue-700); font-size: 10px; font-weight: 700; }
 .modal { width: min(480px, calc(100vw - 28px)); padding: 0; border: 0; border-radius: var(--radius-lg); box-shadow: 0 30px 80px rgba(6,29,53,.26); }
 .modal::backdrop { background: rgba(6,29,53,.48); backdrop-filter: blur(3px); }
 .modal-card { display: grid; gap: 18px; padding: 28px; }

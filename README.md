@@ -22,8 +22,9 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Admin dapat menambah, memindahkan, menonaktifkan/menghapus, dan mereset password pengguna.
 - Admin dapat menambah dan mengubah aturan potongan langsung dari Parameter Sistem.
 - Import workbook bulanan dengan validasi format, NIP, tanggal, duplikasi, unit, hash file, staging, dan publikasi atomik.
-- Notifikasi dalam aplikasi dan email setelah periode dipublikasikan.
+- Notifikasi dalam aplikasi dan email setelah periode dipublikasikan; angka notifikasi dihapus ketika panel notifikasi dibuka.
 - Pengiriman OTP email/nomor HP diverifikasi langsung terhadap respons provider dan kegagalan tidak memutus sesi pengguna.
+- Email mendukung Gmail SMTP tanpa domain maupun Resend dengan domain terverifikasi; nomor HP mendukung Twilio SMS atau webhook internal.
 - Audit log untuk perubahan penting.
 
 ## Data awal dari workbook
@@ -59,6 +60,7 @@ Petunjuk terperinci:
 
 - [Konfigurasi Supabase](docs/SUPABASE.md)
 - [Konfigurasi Render](docs/RENDER.md)
+- [Pengaturan email dan OTP nomor HP](docs/EMAIL_PHONE_SETUP.md)
 - [Upgrade administrator non-pegawai](docs/UPGRADE_ADMIN.md)
 - [Format workbook import](docs/EXCEL_FORMAT.md)
 - [Arsitektur dan matriks akses](docs/ARCHITECTURE.md)
@@ -112,7 +114,7 @@ cmd/server/                  entrypoint aplikasi
 internal/auth/               sesi, password, OTP, CSRF, rate limit
 internal/httpapi/            API, otorisasi, dashboard, banding, admin
 internal/importer/           parser XLSX, perhitungan, staging, publikasi
-internal/mailer/             antrean email dan webhook nomor HP
+internal/mailer/             antrean Gmail/Resend dan Twilio/webhook nomor HP
 internal/storage/            akses bucket privat Supabase
 supabase/migrations/         skema database dan default parameter
 supabase/seed/               unit, nama, NIP, dan jabatan awal

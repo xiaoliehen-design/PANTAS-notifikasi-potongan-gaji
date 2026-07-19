@@ -68,6 +68,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/history", a.withUser(a.history))
 	mux.Handle("GET /api/deductions", a.withUser(a.deductions))
 	mux.Handle("GET /api/notifications", a.withAuth(a.notifications))
+	mux.Handle("POST /api/notifications/read-all", a.withAuth(a.markAllNotificationsRead))
 	mux.Handle("POST /api/notifications/{id}/read", a.withAuth(a.markNotificationRead))
 	mux.Handle("GET /api/monitoring", a.withSupervisor(a.monitoring))
 	mux.Handle("GET /api/warnings", a.withSupervisor(a.warnings))

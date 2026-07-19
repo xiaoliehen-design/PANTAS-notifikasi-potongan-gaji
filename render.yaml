@@ -28,12 +28,40 @@ services:
         sync: false
       - key: BOOTSTRAP_ADMIN_NAME
         sync: false
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_TLS_MODE
+        value: starttls
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_API_URL
         value: https://api.resend.com/emails
-      - key: EMAIL_FROM
+      - key: PHONE_PROVIDER
         sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_API_KEY
+        sync: false
+      - key: TWILIO_API_SECRET
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_API_BASE_URL
+        value: https://api.twilio.com/2010-04-01
       - key: PHONE_OTP_WEBHOOK_URL
         sync: false
       - key: PHONE_OTP_WEBHOOK_TOKEN

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
+	"strings"
 	"testing"
 
 	"github.com/bcpriok/pantas/internal/config"
@@ -49,9 +51,11 @@ func TestQueueSendsJSONAsText(t *testing.T) {
 
 func TestChannelConfigured(t *testing.T) {
 	worker := New(nil, config.Config{
+		EmailProvider:   "resend",
 		ResendAPIKey:    "re_test",
 		ResendAPIURL:    "https://api.resend.com/emails",
 		EmailFrom:       "PANTAS <noreply@example.go.id>",
+		PhoneProvider:   "webhook",
 		PhoneWebhookURL: "https://provider.example/otp",
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !worker.ChannelConfigured("email") || !worker.ChannelConfigured("phone") {
@@ -59,6 +63,25 @@ func TestChannelConfigured(t *testing.T) {
 	}
 	if worker.ChannelConfigured("unknown") {
 		t.Fatal("unknown channel reported available")
+	}
+}
+
+func TestChannelConfiguredForSMTPAndTwilio(t *testing.T) {
+	worker := New(nil, config.Config{
+		EmailProvider:      "smtp",
+		EmailFrom:          "PANTAS <pantas@example.com>",
+		SMTPHost:           "smtp.example.com",
+		SMTPPort:           "587",
+		SMTPUsername:       "pantas@example.com",
+		SMTPPassword:       "app-password",
+		PhoneProvider:      "twilio",
+		TwilioAccountSID:   "AC00000000000000000000000000000000",
+		TwilioAPIKey:       "SK00000000000000000000000000000000",
+		TwilioAPISecret:    "secret",
+		TwilioMessagingSID: "MG00000000000000000000000000000000",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !worker.ChannelConfigured("email") || !worker.ChannelConfigured("phone") {
+		t.Fatal("SMTP/Twilio delivery channel reported unavailable")
 	}
 }
 
@@ -76,10 +99,11 @@ func TestSendEmailUsesConfiguredProvider(t *testing.T) {
 	defer provider.Close()
 
 	worker := New(nil, config.Config{
-		ResendAPIKey: "re_test",
-		ResendAPIURL: provider.URL,
-		EmailFrom:    "PANTAS <noreply@example.go.id>",
-		AppURL:       "https://pantas.example.go.id",
+		EmailProvider: "resend",
+		ResendAPIKey:  "re_test",
+		ResendAPIURL:  provider.URL,
+		EmailFrom:     "PANTAS <noreply@example.go.id>",
+		AppURL:        "https://pantas.example.go.id",
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	err := worker.sendEmail(context.Background(), job{
 		Channel: "email", Destination: "pegawai@example.go.id", Template: "contact_otp",
@@ -91,4 +115,64 @@ func TestSendEmailUsesConfiguredProvider(t *testing.T) {
 	if received["subject"] != "Kode verifikasi kontak PANTAS" {
 		t.Fatalf("subject = %v", received["subject"])
 	}
+}
+
+func TestSMTPMessageContainsSafeMIMEHeaders(t *testing.T) {
+	from, err := mailAddress("PANTAS <pantas@example.com>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := smtpMessage(from, "pegawai@example.com", "Kode verifikasi PANTAS", "Kode Anda <strong>123456</strong>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(message)
+	for _, expected := range []string{"From: PANTAS <pantas@example.com>", "To: <pegawai@example.com>", "Content-Type: text/html", "123456"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("SMTP message does not contain %q", expected)
+		}
+	}
+}
+
+func TestSendPhoneUsesTwilio(t *testing.T) {
+	var receivedTo, receivedBody, receivedService string
+	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "SK_test" || password != "api-secret" {
+			t.Errorf("unexpected Twilio credentials: %q %q", username, password)
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Errorf("parse Twilio form: %v", err)
+		}
+		receivedTo = request.Form.Get("To")
+		receivedBody = request.Form.Get("Body")
+		receivedService = request.Form.Get("MessagingServiceSid")
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusCreated)
+		_, _ = response.Write([]byte(`{"sid":"SM00000000000000000000000000000000","status":"queued"}`))
+	}))
+	defer provider.Close()
+
+	worker := New(nil, config.Config{
+		PhoneProvider:      "twilio",
+		TwilioAPIBaseURL:   provider.URL,
+		TwilioAccountSID:   "AC00000000000000000000000000000000",
+		TwilioAPIKey:       "SK_test",
+		TwilioAPISecret:    "api-secret",
+		TwilioMessagingSID: "MG00000000000000000000000000000000",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := worker.sendPhone(context.Background(), job{
+		Channel: "phone", Destination: "+6281234567890", Template: "contact_otp",
+		Payload: map[string]any{"name": "Pegawai PANTAS", "otp": "123456"},
+	})
+	if err != nil {
+		t.Fatalf("sendPhone() error = %v", err)
+	}
+	if receivedTo != "+6281234567890" || receivedService == "" || !strings.Contains(receivedBody, "123456") {
+		t.Fatalf("unexpected Twilio form: to=%q service=%q body=%q", receivedTo, receivedService, receivedBody)
+	}
+}
+
+func mailAddress(value string) (*mail.Address, error) {
+	return mail.ParseAddress(value)
 }

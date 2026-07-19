@@ -25,11 +25,25 @@ type Config struct {
 	SupabaseURL            string
 	SupabaseServiceKey     string
 	SupabaseStorageBucket  string
+	EmailProvider          string
 	ResendAPIKey           string
 	ResendAPIURL           string
 	EmailFrom              string
+	SMTPHost               string
+	SMTPPort               string
+	SMTPUsername           string
+	SMTPPassword           string
+	SMTPTLSMode            string
+	PhoneProvider          string
 	PhoneWebhookURL        string
 	PhoneWebhookToken      string
+	TwilioAccountSID       string
+	TwilioAuthToken        string
+	TwilioAPIKey           string
+	TwilioAPISecret        string
+	TwilioMessagingSID     string
+	TwilioFrom             string
+	TwilioAPIBaseURL       string
 	BootstrapAdminUsername string
 	BootstrapAdminPassword string
 	BootstrapAdminName     string
@@ -52,11 +66,25 @@ func Load() (Config, error) {
 		SupabaseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/"),
 		SupabaseServiceKey:     strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
 		SupabaseStorageBucket:  env("SUPABASE_STORAGE_BUCKET", "pantas-appeals"),
+		EmailProvider:          strings.ToLower(env("EMAIL_PROVIDER", "auto")),
 		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
 		ResendAPIURL:           strings.TrimRight(env("RESEND_API_URL", "https://api.resend.com/emails"), "/"),
 		EmailFrom:              strings.TrimSpace(os.Getenv("EMAIL_FROM")),
+		SMTPHost:               strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:               env("SMTP_PORT", "587"),
+		SMTPUsername:           strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:           os.Getenv("SMTP_PASSWORD"),
+		SMTPTLSMode:            strings.ToLower(env("SMTP_TLS_MODE", "starttls")),
+		PhoneProvider:          strings.ToLower(env("PHONE_PROVIDER", "auto")),
 		PhoneWebhookURL:        strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_URL")),
 		PhoneWebhookToken:      strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_TOKEN")),
+		TwilioAccountSID:       strings.TrimSpace(os.Getenv("TWILIO_ACCOUNT_SID")),
+		TwilioAuthToken:        strings.TrimSpace(os.Getenv("TWILIO_AUTH_TOKEN")),
+		TwilioAPIKey:           strings.TrimSpace(os.Getenv("TWILIO_API_KEY")),
+		TwilioAPISecret:        strings.TrimSpace(os.Getenv("TWILIO_API_SECRET")),
+		TwilioMessagingSID:     strings.TrimSpace(os.Getenv("TWILIO_MESSAGING_SERVICE_SID")),
+		TwilioFrom:             strings.TrimSpace(os.Getenv("TWILIO_FROM_NUMBER")),
+		TwilioAPIBaseURL:       strings.TrimRight(env("TWILIO_API_BASE_URL", "https://api.twilio.com/2010-04-01"), "/"),
 		BootstrapAdminUsername: strings.ToLower(strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_USERNAME"))),
 		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
 		BootstrapAdminName:     strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_NAME")),
@@ -93,19 +121,49 @@ func Load() (Config, error) {
 	if cfg.SupabaseURL == "" || cfg.SupabaseServiceKey == "" {
 		problems = append(problems, "SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY wajib diisi untuk dokumen banding")
 	}
-	emailPartiallyConfigured := cfg.ResendAPIKey != "" || cfg.EmailFrom != ""
-	if emailPartiallyConfigured && (cfg.ResendAPIKey == "" || cfg.EmailFrom == "") {
-		problems = append(problems, "RESEND_API_KEY dan EMAIL_FROM harus diisi bersamaan agar OTP email dapat dikirim")
+	if cfg.EmailProvider != "auto" && cfg.EmailProvider != "resend" && cfg.EmailProvider != "smtp" {
+		problems = append(problems, "EMAIL_PROVIDER harus berisi auto, resend, atau smtp")
+	}
+	resendConfigured := cfg.ResendAPIKey != ""
+	smtpConfigured := cfg.SMTPHost != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != ""
+	if cfg.EmailProvider == "resend" || (cfg.EmailProvider == "auto" && resendConfigured && !smtpConfigured) {
+		if cfg.ResendAPIKey == "" || cfg.EmailFrom == "" {
+			problems = append(problems, "RESEND_API_KEY dan EMAIL_FROM wajib diisi untuk EMAIL_PROVIDER=resend")
+		}
+	}
+	if cfg.EmailProvider == "smtp" || (cfg.EmailProvider == "auto" && smtpConfigured) {
+		if cfg.SMTPHost == "" || cfg.SMTPPort == "" || cfg.SMTPUsername == "" || cfg.SMTPPassword == "" || cfg.EmailFrom == "" {
+			problems = append(problems, "SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, dan EMAIL_FROM wajib diisi untuk EMAIL_PROVIDER=smtp")
+		}
+		if port, err := strconv.Atoi(cfg.SMTPPort); err != nil || port < 1 || port > 65535 {
+			problems = append(problems, "SMTP_PORT tidak valid")
+		}
+		if cfg.SMTPTLSMode != "starttls" && cfg.SMTPTLSMode != "implicit" {
+			problems = append(problems, "SMTP_TLS_MODE harus berisi starttls atau implicit")
+		}
+	}
+	if cfg.EmailProvider == "auto" && resendConfigured && smtpConfigured {
+		problems = append(problems, "EMAIL_PROVIDER wajib dipilih jika konfigurasi Resend dan SMTP sama-sama terisi")
 	}
 	if cfg.EmailFrom != "" {
 		if _, err := mailaddress.ParseAddress(cfg.EmailFrom); err != nil {
 			problems = append(problems, "EMAIL_FROM tidak valid")
 		}
 	}
-	if cfg.ResendAPIKey != "" && !validHTTPURL(cfg.ResendAPIURL) {
+	if (cfg.EmailProvider == "resend" || resendConfigured) && !validHTTPURL(cfg.ResendAPIURL) {
 		problems = append(problems, "RESEND_API_URL tidak valid")
-	} else if cfg.Environment == "production" && cfg.ResendAPIKey != "" && !isHTTPSURL(cfg.ResendAPIURL) {
+	} else if cfg.Environment == "production" && (cfg.EmailProvider == "resend" || resendConfigured) && !isHTTPSURL(cfg.ResendAPIURL) {
 		problems = append(problems, "RESEND_API_URL production wajib menggunakan https")
+	}
+	if cfg.PhoneProvider != "auto" && cfg.PhoneProvider != "webhook" && cfg.PhoneProvider != "twilio" {
+		problems = append(problems, "PHONE_PROVIDER harus berisi auto, webhook, atau twilio")
+	}
+	twilioConfigured := cfg.TwilioAccountSID != "" || cfg.TwilioAuthToken != "" || cfg.TwilioAPIKey != "" || cfg.TwilioAPISecret != "" || cfg.TwilioMessagingSID != "" || cfg.TwilioFrom != ""
+	webhookConfigured := cfg.PhoneWebhookURL != "" || cfg.PhoneWebhookToken != ""
+	if cfg.PhoneProvider == "webhook" || (cfg.PhoneProvider == "auto" && webhookConfigured && !twilioConfigured) {
+		if cfg.PhoneWebhookURL == "" {
+			problems = append(problems, "PHONE_OTP_WEBHOOK_URL wajib diisi untuk PHONE_PROVIDER=webhook")
+		}
 	}
 	if cfg.PhoneWebhookURL != "" && !validHTTPURL(cfg.PhoneWebhookURL) {
 		problems = append(problems, "PHONE_OTP_WEBHOOK_URL tidak valid")
@@ -114,6 +172,23 @@ func Load() (Config, error) {
 	}
 	if cfg.PhoneWebhookToken != "" && cfg.PhoneWebhookURL == "" {
 		problems = append(problems, "PHONE_OTP_WEBHOOK_URL wajib diisi jika PHONE_OTP_WEBHOOK_TOKEN digunakan")
+	}
+	if cfg.PhoneProvider == "twilio" || (cfg.PhoneProvider == "auto" && twilioConfigured) {
+		credentialOK := (cfg.TwilioAPIKey != "" && cfg.TwilioAPISecret != "") || cfg.TwilioAuthToken != ""
+		if cfg.TwilioAccountSID == "" || !credentialOK || (cfg.TwilioMessagingSID == "" && cfg.TwilioFrom == "") {
+			problems = append(problems, "Twilio memerlukan TWILIO_ACCOUNT_SID, kredensial API/Auth Token, serta TWILIO_MESSAGING_SERVICE_SID atau TWILIO_FROM_NUMBER")
+		}
+		if (cfg.TwilioAPIKey == "") != (cfg.TwilioAPISecret == "") {
+			problems = append(problems, "TWILIO_API_KEY dan TWILIO_API_SECRET harus diisi bersamaan")
+		}
+		if !validHTTPURL(cfg.TwilioAPIBaseURL) {
+			problems = append(problems, "TWILIO_API_BASE_URL tidak valid")
+		} else if cfg.Environment == "production" && !isHTTPSURL(cfg.TwilioAPIBaseURL) {
+			problems = append(problems, "TWILIO_API_BASE_URL production wajib menggunakan https")
+		}
+	}
+	if cfg.PhoneProvider == "auto" && webhookConfigured && twilioConfigured {
+		problems = append(problems, "PHONE_PROVIDER wajib dipilih jika konfigurasi webhook dan Twilio sama-sama terisi")
 	}
 	if len(problems) > 0 {
 		return Config{}, errors.New(strings.Join(problems, "; "))

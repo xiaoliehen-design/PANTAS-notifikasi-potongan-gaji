@@ -201,6 +201,18 @@ func (a *App) markNotificationRead(response http.ResponseWriter, request *http.R
 	response.WriteHeader(http.StatusNoContent)
 }
 
+func (a *App) markAllNotificationsRead(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
+	command, err := a.pool.Exec(request.Context(), `
+		update public.notifications
+		set read_at = now()
+		where user_id = $1 and read_at is null`, principal.ID)
+	if err != nil {
+		a.internalError(response, "notifications read all", err)
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"read": command.RowsAffected()})
+}
+
 func (a *App) monitoring(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
 	period, err := a.currentPeriod(request)
 	if errors.Is(err, pgx.ErrNoRows) {

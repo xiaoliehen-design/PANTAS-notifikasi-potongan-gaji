@@ -3,12 +3,20 @@ package mailer
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/quotedprintable"
+	"net"
 	"net/http"
+	mailaddress "net/mail"
+	"net/smtp"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,12 +106,59 @@ func QueueImmediate(ctx context.Context, database QueryExecer, userID *string, c
 func (w *Worker) ChannelConfigured(channel string) bool {
 	switch channel {
 	case "email":
-		return w.cfg.ResendAPIKey != "" && w.cfg.EmailFrom != "" && w.cfg.ResendAPIURL != ""
+		return w.emailProvider() != ""
 	case "phone":
-		return w.cfg.PhoneWebhookURL != ""
+		return w.phoneProvider() != ""
 	default:
 		return false
 	}
+}
+
+func (w *Worker) emailProvider() string {
+	switch strings.ToLower(w.cfg.EmailProvider) {
+	case "smtp":
+		if w.cfg.SMTPHost != "" && w.cfg.SMTPPort != "" && w.cfg.SMTPUsername != "" && w.cfg.SMTPPassword != "" && w.cfg.EmailFrom != "" {
+			return "smtp"
+		}
+	case "resend":
+		if w.cfg.ResendAPIKey != "" && w.cfg.ResendAPIURL != "" && w.cfg.EmailFrom != "" {
+			return "resend"
+		}
+	case "", "auto":
+		if w.cfg.SMTPHost != "" && w.cfg.SMTPPort != "" && w.cfg.SMTPUsername != "" && w.cfg.SMTPPassword != "" && w.cfg.EmailFrom != "" {
+			return "smtp"
+		}
+		if w.cfg.ResendAPIKey != "" && w.cfg.ResendAPIURL != "" && w.cfg.EmailFrom != "" {
+			return "resend"
+		}
+	}
+	return ""
+}
+
+func (w *Worker) phoneProvider() string {
+	switch strings.ToLower(w.cfg.PhoneProvider) {
+	case "twilio":
+		if w.twilioConfigured() {
+			return "twilio"
+		}
+	case "webhook":
+		if w.cfg.PhoneWebhookURL != "" {
+			return "webhook"
+		}
+	case "", "auto":
+		if w.twilioConfigured() {
+			return "twilio"
+		}
+		if w.cfg.PhoneWebhookURL != "" {
+			return "webhook"
+		}
+	}
+	return ""
+}
+
+func (w *Worker) twilioConfigured() bool {
+	credentialOK := (w.cfg.TwilioAPIKey != "" && w.cfg.TwilioAPISecret != "") || w.cfg.TwilioAuthToken != ""
+	return w.cfg.TwilioAccountSID != "" && credentialOK && (w.cfg.TwilioMessagingSID != "" || w.cfg.TwilioFrom != "")
 }
 
 // DeliverClaimed sends a job created with QueueImmediate. Provider failures are
@@ -235,6 +290,17 @@ func (w *Worker) send(ctx context.Context, item job) error {
 }
 
 func (w *Worker) sendEmail(ctx context.Context, item job) error {
+	switch w.emailProvider() {
+	case "smtp":
+		return w.sendEmailSMTP(ctx, item)
+	case "resend":
+		return w.sendEmailResend(ctx, item)
+	default:
+		return fmt.Errorf("email provider belum dikonfigurasi")
+	}
+}
+
+func (w *Worker) sendEmailResend(ctx context.Context, item job) error {
 	if w.cfg.ResendAPIKey == "" || w.cfg.EmailFrom == "" {
 		return fmt.Errorf("email provider belum dikonfigurasi")
 	}
@@ -252,6 +318,7 @@ func (w *Worker) sendEmail(ctx context.Context, item job) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+w.cfg.ResendAPIKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "PANTAS/1.0")
 	resp, err := w.client.Do(req)
 	if err != nil {
 		return err
@@ -264,14 +331,118 @@ func (w *Worker) sendEmail(ctx context.Context, item job) error {
 	return nil
 }
 
+func (w *Worker) sendEmailSMTP(ctx context.Context, item job) error {
+	from, err := mailaddress.ParseAddress(w.cfg.EmailFrom)
+	if err != nil {
+		return fmt.Errorf("EMAIL_FROM tidak valid: %w", err)
+	}
+	port, err := strconv.Atoi(w.cfg.SMTPPort)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("SMTP_PORT tidak valid")
+	}
+	address := net.JoinHostPort(w.cfg.SMTPHost, strconv.Itoa(port))
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	tlsConfig := &tls.Config{ServerName: w.cfg.SMTPHost, MinVersion: tls.VersionTLS12}
+
+	var connection net.Conn
+	if w.cfg.SMTPTLSMode == "implicit" {
+		connection, err = tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
+	} else {
+		connection, err = dialer.DialContext(ctx, "tcp", address)
+	}
+	if err != nil {
+		return fmt.Errorf("koneksi SMTP gagal: %w", err)
+	}
+	defer connection.Close()
+	deadline := time.Now().Add(20 * time.Second)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	_ = connection.SetDeadline(deadline)
+
+	client, err := smtp.NewClient(connection, w.cfg.SMTPHost)
+	if err != nil {
+		return fmt.Errorf("inisialisasi SMTP gagal: %w", err)
+	}
+	defer client.Close()
+	if w.cfg.SMTPTLSMode != "implicit" {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("server SMTP tidak mendukung STARTTLS")
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("STARTTLS SMTP gagal: %w", err)
+		}
+	}
+	if err := client.Auth(smtp.PlainAuth("", w.cfg.SMTPUsername, w.cfg.SMTPPassword, w.cfg.SMTPHost)); err != nil {
+		return fmt.Errorf("autentikasi SMTP gagal: %w", err)
+	}
+	if err := client.Mail(from.Address); err != nil {
+		return fmt.Errorf("alamat pengirim SMTP ditolak: %w", err)
+	}
+	if err := client.Rcpt(item.Destination); err != nil {
+		return fmt.Errorf("alamat penerima SMTP ditolak: %w", err)
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("SMTP DATA ditolak: %w", err)
+	}
+	subject, body := renderTemplate(item.Template, item.Payload, w.cfg.AppURL)
+	message, err := smtpMessage(from, item.Destination, subject, body)
+	if err != nil {
+		_ = writer.Close()
+		return err
+	}
+	if _, err := writer.Write(message); err != nil {
+		_ = writer.Close()
+		return fmt.Errorf("penulisan email SMTP gagal: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("pengiriman email SMTP gagal: %w", err)
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("penutupan SMTP gagal: %w", err)
+	}
+	return nil
+}
+
+func smtpMessage(from *mailaddress.Address, destination, subject, body string) ([]byte, error) {
+	to := (&mailaddress.Address{Address: destination}).String()
+	var message bytes.Buffer
+	fmt.Fprintf(&message, "From: %s\r\n", from.String())
+	fmt.Fprintf(&message, "To: %s\r\n", to)
+	fmt.Fprintf(&message, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", subject))
+	fmt.Fprintf(&message, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
+	message.WriteString("MIME-Version: 1.0\r\n")
+	message.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	message.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+	encoded := quotedprintable.NewWriter(&message)
+	if _, err := encoded.Write([]byte(body)); err != nil {
+		return nil, err
+	}
+	if err := encoded.Close(); err != nil {
+		return nil, err
+	}
+	return message.Bytes(), nil
+}
+
 func (w *Worker) sendPhone(ctx context.Context, item job) error {
+	switch w.phoneProvider() {
+	case "twilio":
+		return w.sendPhoneTwilio(ctx, item)
+	case "webhook":
+		return w.sendPhoneWebhook(ctx, item)
+	default:
+		return fmt.Errorf("provider OTP nomor HP belum dikonfigurasi")
+	}
+}
+
+func (w *Worker) sendPhoneWebhook(ctx context.Context, item job) error {
 	if w.cfg.PhoneWebhookURL == "" {
 		return fmt.Errorf("webhook OTP nomor HP belum dikonfigurasi")
 	}
-	_, body := renderTemplate(item.Template, item.Payload, w.cfg.AppURL)
 	payload, _ := json.Marshal(map[string]any{
 		"to":       item.Destination,
-		"message":  stripHTML(body),
+		"message":  renderPhoneTemplate(item.Template, item.Payload, w.cfg.AppURL),
 		"template": item.Template,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.PhoneWebhookURL, bytes.NewReader(payload))
@@ -294,6 +465,52 @@ func (w *Worker) sendPhone(ctx context.Context, item job) error {
 	return nil
 }
 
+func (w *Worker) sendPhoneTwilio(ctx context.Context, item job) error {
+	if !w.twilioConfigured() {
+		return fmt.Errorf("Twilio SMS belum dikonfigurasi")
+	}
+	form := url.Values{}
+	form.Set("To", item.Destination)
+	form.Set("Body", renderPhoneTemplate(item.Template, item.Payload, w.cfg.AppURL))
+	if w.cfg.TwilioMessagingSID != "" {
+		form.Set("MessagingServiceSid", w.cfg.TwilioMessagingSID)
+	} else {
+		form.Set("From", w.cfg.TwilioFrom)
+	}
+	endpoint := fmt.Sprintf("%s/Accounts/%s/Messages.json", w.cfg.TwilioAPIBaseURL, url.PathEscape(w.cfg.TwilioAccountSID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	username, password := w.cfg.TwilioAPIKey, w.cfg.TwilioAPISecret
+	if username == "" {
+		username, password = w.cfg.TwilioAccountSID, w.cfg.TwilioAuthToken
+	}
+	req.SetBasicAuth(username, password)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "PANTAS/1.0")
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Twilio status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	var result struct {
+		SID    string `json:"sid"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return fmt.Errorf("respons Twilio tidak valid: %w", err)
+	}
+	if result.SID == "" {
+		return fmt.Errorf("Twilio tidak mengembalikan SID pesan")
+	}
+	return nil
+}
+
 func renderTemplate(code string, payload map[string]any, appURL string) (string, string) {
 	name := html.EscapeString(value(payload, "name", "Pegawai"))
 	period := html.EscapeString(value(payload, "period", "periode terbaru"))
@@ -310,6 +527,19 @@ func renderTemplate(code string, payload map[string]any, appURL string) (string,
 		return "Status banding PANTAS diperbarui", fmt.Sprintf("Status banding periode %s telah diperbarui. Buka <a href=\"%s\">PANTAS</a> untuk melihat hasilnya.", period, link)
 	default:
 		return "Data potongan PANTAS telah diperbarui", fmt.Sprintf("Halo %s, data presensi dan potongan periode %s telah tersedia. Demi privasi, detail hanya dapat dilihat setelah login di <a href=\"%s\">PANTAS</a>.", name, period, link)
+	}
+}
+
+func renderPhoneTemplate(code string, payload map[string]any, appURL string) string {
+	otp := value(payload, "otp", "")
+	switch code {
+	case "password_otp":
+		return fmt.Sprintf("PANTAS: kode reset password %s. Berlaku 10 menit. Jangan bagikan kode ini.", otp)
+	case "contact_otp":
+		return fmt.Sprintf("PANTAS: kode verifikasi nomor HP %s. Berlaku 10 menit. Jangan bagikan kode ini.", otp)
+	default:
+		_, body := renderTemplate(code, payload, appURL)
+		return stripHTML(body)
 	}
 }
 
