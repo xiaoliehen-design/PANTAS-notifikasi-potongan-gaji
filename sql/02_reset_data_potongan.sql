@@ -1,4 +1,8 @@
--- PANTAS V6 - RESET DATA POTONGAN
+-- PANTAS V6 - RESET DATA POTONGAN - VERSI SIAP JALANKAN
+--
+-- PERINGATAN: file ini tidak memerlukan perubahan kode konfirmasi.
+-- Menjalankan seluruh file akan langsung menghapus data potongan sesuai
+-- cakupan di bawah. Buat backup dan hentikan service Render terlebih dahulu.
 --
 -- CAKUPAN YANG DIHAPUS:
 --   1. Periode pelaporan dan seluruh batch impor.
@@ -18,18 +22,18 @@
 --   * SQL ini menghapus metadata dokumen banding. Berkas fisik pada bucket
 --     Storage "pantas-appeals" tidak dihapus langsung oleh SQL. Daftar path
 --     yang perlu dihapus manual ditampilkan pada hasil akhir.
---   * Untuk membuka pengaman, ubah nilai BELUM_DIKONFIRMASI di bawah menjadi
---     RESET_DATA_POTONGAN, lalu jalankan seluruh file di Supabase SQL Editor.
+--   * Versi ini sudah dikonfirmasi dan dapat langsung dijalankan seluruhnya
+--     melalui Supabase SQL Editor.
 
 begin;
 
 do $pantas_reset_guard$
 declare
-  v_confirmation constant text := 'BELUM_DIKONFIRMASI';
+  v_confirmation constant text := 'RESET_DATA_POTONGAN';
 begin
   if v_confirmation <> 'RESET_DATA_POTONGAN' then
     raise exception using
-      message = 'Reset dibatalkan: ubah BELUM_DIKONFIRMASI menjadi RESET_DATA_POTONGAN terlebih dahulu.';
+      message = 'Reset dibatalkan: kode konfirmasi internal file tidak sesuai.';
   end if;
 
   if to_regclass('public.reporting_periods') is null
