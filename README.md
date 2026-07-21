@@ -8,7 +8,7 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 
 ## Fitur
 
-- Pegawai login memakai NIP; password awal sama dengan NIP dan wajib diganti pada login pertama.
+- Pegawai login memakai NIP; password awal sama dengan NIP dan dapat diganti melalui menu Profil & Keamanan tanpa pop-up wajib pada login pertama.
 - Login dilindungi CAPTCHA yang diverifikasi server; sesi berakhir setelah 30 menit tidak aktif dan tidak dapat dipakai kembali setelah tab ditutup.
 - Administrator merupakan akun sistem terpisah, login memakai username dan password awal dari environment Render, serta tidak tercatat sebagai pegawai.
 - Profil untuk mengubah password serta memverifikasi email dan nomor HP pemulihan.

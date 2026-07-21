@@ -83,7 +83,7 @@ func (a *App) adminCreateUser(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	a.audit(request, actor.ID, "user.create", "user", id, map[string]any{"nip": input.NIP, "role": input.Role, "unit_id": input.UnitID})
-	writeJSON(response, http.StatusCreated, map[string]any{"id": id, "message": "Pengguna dibuat. Password awal adalah NIP dan wajib diganti saat login pertama."})
+	writeJSON(response, http.StatusCreated, map[string]any{"id": id, "message": "Pengguna dibuat. Password awal adalah NIP dan dapat diganti melalui menu Profil & Keamanan."})
 }
 
 func (a *App) adminUpdateUser(response http.ResponseWriter, request *http.Request, actor auth.Principal) {
@@ -230,7 +230,7 @@ func (a *App) adminResetUserPassword(response http.ResponseWriter, request *http
 	}
 	_, _ = a.pool.Exec(request.Context(), `update public.sessions set revoked_at = now() where user_id = $1 and revoked_at is null`, userID)
 	a.audit(request, actor.ID, "user.password_reset", "user", userID, map[string]any{})
-	writeJSON(response, http.StatusOK, map[string]any{"message": "Password dikembalikan menjadi NIP dan wajib diganti saat login."})
+	writeJSON(response, http.StatusOK, map[string]any{"message": "Password dikembalikan menjadi NIP. Pengguna dapat menggantinya melalui menu Profil & Keamanan."})
 }
 
 func (a *App) adminUnits(response http.ResponseWriter, request *http.Request, _ auth.Principal) {

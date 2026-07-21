@@ -24,6 +24,8 @@ const state = {
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const page = $("#page-content");
+let sidebarScrollFrame = null;
+let sidebarScrollTarget = 0;
 
 document.addEventListener("DOMContentLoaded", boot);
 
@@ -62,6 +64,13 @@ function bindGlobalEvents() {
   $("#drawer-backdrop").addEventListener("click", closeNotifications);
   $("#profile-button").addEventListener("click", () => navigate("profile"));
   $("#password-form").addEventListener("submit", changePassword);
+  $("#password-form").elements.new_password.addEventListener("input", updatePasswordRequirements);
+  $("[data-close-password]").addEventListener("click", closePasswordDialog);
+  $("#password-dialog").addEventListener("cancel", event => {
+    event.preventDefault();
+    closePasswordDialog();
+  });
+  $("#main-nav").addEventListener("wheel", smoothSidebarWheel, { passive: false });
   window.addEventListener("hashchange", renderRoute);
   ["pointerdown", "keydown", "scroll", "touchstart"].forEach(name => document.addEventListener(name, recordActivity, { passive: true }));
   document.addEventListener("visibilitychange", () => {
@@ -138,22 +147,74 @@ async function changePassword(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const button = $("button[type=submit]", form);
+  const currentPassword = form.elements.current_password.value;
+  const newPassword = form.elements.new_password.value;
+  const validation = passwordRequirementStatus(newPassword);
+  if (!currentPassword || !newPassword || !validation.valid) {
+    closePasswordDialog();
+    toast("Password belum berubah", !currentPassword ? "Password saat ini wajib diisi." : validation.message, "error");
+    return;
+  }
   setBusy(button, true, "Menyimpan…");
   try {
     const data = await api("/api/auth/change-password", { method: "POST", body: formJSON(form) });
-    $("#password-dialog").close();
+    closePasswordDialog();
     state.user = null;
     showAuth();
     toast("Berhasil", data.message, "success");
   } catch (error) {
+    closePasswordDialog();
     toast("Password belum berubah", error.message, "error");
-    if (error.code === "current_password_invalid") {
-      form.elements.current_password.value = "";
-      form.elements.current_password.setAttribute("aria-invalid", "true");
-      form.elements.current_password.focus();
-    }
   }
   finally { setBusy(button, false); }
+}
+
+function openPasswordDialog() {
+  const dialog = $("#password-dialog");
+  const form = $("#password-form");
+  form.reset();
+  form.elements.current_password.removeAttribute("aria-invalid");
+  form.elements.new_password.removeAttribute("aria-invalid");
+  updatePasswordRequirements();
+  if (!dialog.open) dialog.showModal();
+  setTimeout(() => form.elements.current_password.focus(), 0);
+}
+
+function closePasswordDialog() {
+  const dialog = $("#password-dialog");
+  const form = $("#password-form");
+  if (dialog.open) dialog.close();
+  form.reset();
+  updatePasswordRequirements();
+}
+
+function passwordRequirementStatus(password) {
+  const value = String(password || "");
+  const identifier = String(state.user?.account_type === "admin" ? state.user?.username : state.user?.nip || "").toLowerCase();
+  const classes = [/[A-Z]/.test(value), /[a-z]/.test(value), /[0-9]/.test(value), /[^A-Za-z0-9]/.test(value)].filter(Boolean).length;
+  const checks = {
+    length: value.length >= 10 && value.length <= 128,
+    classes: classes >= 3,
+    identifier: !identifier || !value.toLowerCase().includes(identifier),
+  };
+  let message = "Password baru belum memenuhi ketentuan keamanan.";
+  if (!checks.length) message = "Password baru harus berisi 10–128 karakter.";
+  else if (!checks.classes) message = "Gunakan sedikitnya tiga jenis karakter: huruf besar, huruf kecil, angka, atau simbol.";
+  else if (!checks.identifier) message = "Password baru tidak boleh memuat NIP atau username.";
+  return { ...checks, valid: checks.length && checks.classes && checks.identifier, message };
+}
+
+function updatePasswordRequirements() {
+  const form = $("#password-form");
+  if (!form) return;
+  const value = form.elements.new_password.value;
+  const status = passwordRequirementStatus(value);
+  ["length", "classes", "identifier"].forEach(rule => {
+    const item = $(`[data-password-rule="${rule}"]`);
+    if (!item) return;
+    item.classList.toggle("valid", Boolean(value) && status[rule]);
+    item.classList.toggle("invalid", Boolean(value) && !status[rule]);
+  });
 }
 
 async function logout() {
@@ -195,8 +256,8 @@ function showApp() {
   applySidebarState();
   buildNavigation();
   startSessionTimers();
-  if (state.user.must_change_password) {
-    $("#password-dialog").showModal();
+  if (state.user.account_type === "admin" && state.user.must_change_password) {
+    openPasswordDialog();
     return;
   }
   if (!location.hash) {
@@ -307,6 +368,32 @@ function toggleSidebar() {
   applySidebarState();
 }
 
+function smoothSidebarWheel(event) {
+  const nav = event.currentTarget;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || nav.scrollHeight <= nav.clientHeight) return;
+  const multiplier = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? nav.clientHeight : 1;
+  const delta = event.deltaY * multiplier;
+  if (!delta) return;
+  const max = Math.max(0, nav.scrollHeight - nav.clientHeight);
+  if (!sidebarScrollFrame) sidebarScrollTarget = nav.scrollTop;
+  const nextTarget = Math.min(max, Math.max(0, sidebarScrollTarget + delta));
+  if ((nav.scrollTop <= 0 && delta < 0) || (nav.scrollTop >= max && delta > 0)) return;
+  event.preventDefault();
+  sidebarScrollTarget = nextTarget;
+  if (sidebarScrollFrame) return;
+  const animate = () => {
+    const distance = sidebarScrollTarget - nav.scrollTop;
+    if (Math.abs(distance) < 0.5) {
+      nav.scrollTop = sidebarScrollTarget;
+      sidebarScrollFrame = null;
+      return;
+    }
+    nav.scrollTop += distance * 0.24;
+    sidebarScrollFrame = requestAnimationFrame(animate);
+  };
+  sidebarScrollFrame = requestAnimationFrame(animate);
+}
+
 const baseNavigation = [
   { section: "Pribadi" },
   { id: "dashboard", label: "Dashboard", icon: "⌂" },
@@ -395,6 +482,8 @@ async function renderRoute() {
   state.route = route;
   const context = { route, version: state.routeVersion, signal: state.routeController.signal };
   $$(".nav-link").forEach(link => link.classList.toggle("active", link.dataset.route === route));
+  const activeLink = $(`.nav-link[data-route="${route}"]`);
+  activeLink?.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   const labels = {
     dashboard: ["Ringkasan pribadi", "Dashboard"], history: ["Analisis pribadi", "Riwayat Potongan"],
     deductions: ["Transparansi", "Detail Potongan"], appeals: ["Koreksi data", "Banding Saya"],
@@ -693,7 +782,7 @@ function bindUserActions() {
   $$('[data-edit-user]').forEach(button => button.addEventListener("click", () => openUserDialog(JSON.parse(button.dataset.user))));
   $$('[data-reset-user]').forEach(button => button.addEventListener("click", async () => {
     if (!await confirmAction("Reset password?", "Password akan kembali menjadi NIP dan seluruh sesi pengguna dicabut.")) return;
-    await api(`/api/admin/users/${button.dataset.resetUser}/reset-password`, { method:"POST" }); toast("Password direset","Pengguna wajib menggantinya saat login.","success");
+    await api(`/api/admin/users/${button.dataset.resetUser}/reset-password`, { method:"POST" }); toast("Password direset","Pengguna dapat login dengan password awal dan menggantinya melalui Profil & Keamanan.","success");
   }));
   $$('[data-delete-user]').forEach(button => button.addEventListener("click", async () => {
     if (!await confirmAction("Hapus pengguna?", "Akun dinonaktifkan, kontak dihapus, tetapi riwayat tetap dipertahankan.", true)) return;
@@ -751,8 +840,8 @@ async function renderAdminDeductions(context = activeRouteContext("admin-deducti
     return;
   }
   const period = data.current_period;
-  const actions = `<button class="button button-primary" data-manual-deduction>+ Input perorangan</button><button class="button button-danger" data-delete-period>Hapus data bulan ini</button>`;
-  page.innerHTML = `${pageIntro("Kelola potongan", "Input perorangan, koreksi manual, dan penghapusan satu periode selalu dicatat pada audit trail.", actions)}
+  const actions = `<button class="button button-primary" data-manual-deduction>+ Input perorangan</button><button class="button button-danger" data-delete-period>Hapus data periode…</button>`;
+  page.innerHTML = `${pageIntro("Kelola potongan", "Input perorangan, koreksi manual, dan penghapusan periode berjalan maupun bulan sebelumnya selalu dicatat pada audit trail.", actions)}
     <section class="panel"><form id="deduction-admin-filter" class="filter-bar"><label class="field"><span>Periode</span><select name="period_id">${data.periods.map(item=>`<option value="${item.id}" ${item.id===period.id?"selected":""}>${h(item.label)}</option>`).join("")}</select></label><label class="field grow"><span>Pencarian</span><input name="q" value="${h(query.get("q")||"")}" placeholder="Nama, NIP, atau unit"></label><button class="button button-secondary">Terapkan</button></form>${adminDeductionTable(data.items)}<div class="pagination"><button class="button button-small button-ghost" data-deduction-page="${Math.max(1,data.page-1)}" ${data.page<=1?"disabled":""}>Sebelumnya</button><span class="period-pill">${data.page} · ${numberID(data.total)} data</span><button class="button button-small button-ghost" data-deduction-page="${data.page+1}" ${data.page*data.limit>=data.total?"disabled":""}>Berikutnya</button></div></section>`;
   $("#deduction-admin-filter").addEventListener("submit", event => {
     event.preventDefault();
@@ -767,7 +856,7 @@ async function renderAdminDeductions(context = activeRouteContext("admin-deducti
     navigate("admin-deductions", `?${next}`);
   }));
   $("[data-manual-deduction]").addEventListener("click",()=>openManualDeductionDialog(options, period));
-  $("[data-delete-period]").addEventListener("click",()=>openDeletePeriodDialog(period));
+  $("[data-delete-period]").addEventListener("click",()=>openDeletePeriodDialog(data.periods, period));
   $$('[data-edit-deduction]').forEach(button=>button.addEventListener("click",()=>openEditDeductionDialog(JSON.parse(button.dataset.item))));
 }
 
@@ -830,23 +919,37 @@ function openEditDeductionDialog(item) {
   });
 }
 
-function openDeletePeriodDialog(period) {
-  const confirmation = `HAPUS DATA ${period.label.toUpperCase()}`;
+function openDeletePeriodDialog(periods, selectedPeriod) {
   const dialog = dynamicDialog("Hapus seluruh data satu bulan", `<form class="stack-lg" id="delete-period-form">
-    <div class="callout callout-danger"><span>!</span><div><strong>${h(period.label)} akan dihapus seluruhnya.</strong><br>Batch Excel, data presensi/potongan, banding, dan dokumen banding periode ini akan dihapus. Pegawai dan periode lain tidak terpengaruh.</div></div>
+    <label class="field"><span>Pilih periode yang akan dihapus</span><select name="period_id" required>${periods.map(period=>`<option value="${period.id}" ${period.id===selectedPeriod.id?"selected":""}>${h(period.label)} · ${formatDate(period.start)}–${formatDate(period.end)}</option>`).join("")}</select><small>Periode berjalan dan seluruh bulan sebelumnya yang masih dipublikasikan dapat dipilih.</small></label>
+    <div class="callout callout-danger"><span>!</span><div data-delete-period-warning></div></div>
     <label class="field"><span>Alasan penghapusan</span><textarea name="reason" minlength="3" maxlength="500" placeholder="Contoh: Dokumen Excel yang dipublikasikan salah" required></textarea></label>
-    <label class="field"><span>Ketik persis: ${h(confirmation)}</span><input name="confirmation" autocomplete="off" required></label>
-    <button class="button button-danger" type="submit">Hapus data ${h(period.label)}</button>
+    <label class="field"><span>Ketik persis: <strong data-delete-confirmation-label></strong></span><input name="confirmation" autocomplete="off" required></label>
+    <button class="button button-danger" type="submit" data-delete-period-submit></button>
   </form>`);
   const form=$("form",dialog);
+  const updateTarget=()=>{
+    const period=periods.find(item=>item.id===form.elements.period_id.value)||selectedPeriod;
+    const confirmation=`HAPUS DATA ${period.label.toUpperCase()}`;
+    $("[data-delete-period-warning]",form).innerHTML=`<strong>${h(period.label)} akan dihapus seluruhnya.</strong><br>Batch Excel, data presensi/potongan, banding, dan dokumen banding periode ini akan dihapus. Pegawai dan periode lain tidak terpengaruh.`;
+    $("[data-delete-confirmation-label]",form).textContent=confirmation;
+    $("[data-delete-period-submit]",form).textContent=`Hapus data ${period.label}`;
+    form.elements.confirmation.value="";
+  };
+  form.elements.period_id.addEventListener("change",updateTarget);
+  updateTarget();
   form.addEventListener("submit",async event=>{
     event.preventDefault();
     const button=$("button[type=submit]",form);
+    const period=periods.find(item=>item.id===form.elements.period_id.value);
+    if(!period){toast("Periode tidak valid","Pilih periode yang tersedia.","error");return;}
+    const confirmation=`HAPUS DATA ${period.label.toUpperCase()}`;
     if(form.elements.confirmation.value!==confirmation){toast("Konfirmasi belum sesuai",`Ketik persis: ${confirmation}`,"error");return;}
     setBusy(button,true,"Menghapus…");
     try{
-      const result=await api(`/api/admin/periods/${period.id}/deductions`,{method:"DELETE",body:formJSON(form)});
-      dialog.close();dialog.remove();toast("Data periode dihapus",result.storage_warning||result.message,result.storage_warning?"error":"success");navigate("admin-imports");
+      const result=await api(`/api/admin/periods/${period.id}/deductions`,{method:"DELETE",body:{confirmation:form.elements.confirmation.value,reason:form.elements.reason.value}});
+      dialog.close();dialog.remove();toast("Data periode dihapus",result.storage_warning||result.message,result.storage_warning?"error":"success");
+      if(location.hash==="#admin-deductions")await renderAdminDeductions();else navigate("admin-deductions");
     }catch(error){toast("Data belum dihapus",error.message,"error");}
     finally{if(form.isConnected)setBusy(button,false);}
   });
@@ -920,13 +1023,13 @@ async function renderProfile(context = activeRouteContext("profile")){
     const adminLabel = state.user.admin_role === "treasury_admin" ? "Admin Perbendaharaan" : "Administrator Sistem";
     page.innerHTML=`${pageIntro("Profil & keamanan","Akun admin terpisah dari data pegawai dan dibatasi sesuai perannya.")}
       <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>@${h(state.user.username)}</p><span class="status status-active">${h(adminLabel)}</span></section><section class="panel"><div class="panel-header"><div><h3>Keamanan akun</h3><p>Username admin tidak menggunakan NIP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Password</strong><small>Gunakan password unik dan ganti secara berkala.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
-    $("[data-change-password]").addEventListener("click",()=>$("#password-dialog").showModal());
+    $("[data-change-password]").addEventListener("click",openPasswordDialog);
     return;
   }
   page.innerHTML=`${pageIntro("Profil & keamanan","Kontak terverifikasi digunakan untuk pemulihan password.")}
     <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>${h(state.user.nip)}</p><span class="status status-active">${h(roleLabel(state.user.position_role))}</span><p>${h(state.user.unit_name)}</p></section><section class="panel"><div class="panel-header"><div><h3>Kontak pemulihan</h3><p>Perubahan memerlukan password dan kode OTP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Email</strong><small>${h(state.user.email||"Belum ditambahkan")} · ${state.user.email_verified?"Terverifikasi":"Belum terverifikasi"}</small></div><button class="button button-small button-secondary" data-contact="email">Ubah</button></div><div class="contact-card"><div><strong>Nomor HP</strong><small>${h(state.user.phone||"Belum ditambahkan")} · ${state.user.phone_verified?"Terverifikasi":"Belum terverifikasi"}</small></div><button class="button button-small button-secondary" data-contact="phone">Ubah</button></div><div class="contact-card"><div><strong>Password</strong><small>Ganti berkala dan jangan gunakan NIP.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
   $$('[data-contact]').forEach(button=>button.addEventListener("click",()=>openContactDialog(button.dataset.contact)));
-  $("[data-change-password]").addEventListener("click",()=>$("#password-dialog").showModal());
+  $("[data-change-password]").addEventListener("click",openPasswordDialog);
 }
 
 function openContactDialog(channel) {
@@ -1132,7 +1235,7 @@ async function api(path, options={}) {
   const response=await fetch(path,{method:options.method||"GET",headers,body,credentials:"same-origin",signal:options.signal});
   if(response.status===204)return null;
   const type=response.headers.get("content-type")||"";const data=type.includes("application/json")?await response.json():null;
-  if(!response.ok){const code=data?.error?.code;if(response.status===401&&code==="unauthenticated"&&options.auth!==false){state.user=null;clearTabSession();showAuth();}if(response.status===428&&state.user){$("#password-dialog").showModal();}const error=new Error(data?.error?.message||`Permintaan gagal (${response.status})`);error.code=code;error.data=data;throw error;}
+  if(!response.ok){const code=data?.error?.code;if(response.status===401&&code==="unauthenticated"&&options.auth!==false){state.user=null;clearTabSession();showAuth();}if(response.status===428&&state.user?.account_type==="admin")openPasswordDialog();const error=new Error(data?.error?.message||`Permintaan gagal (${response.status})`);error.code=code;error.data=data;throw error;}
   return data;
 }
 

@@ -128,8 +128,8 @@ func (a *App) withAuth(next handlerFunc) http.Handler {
 				return
 			}
 		}
-		if principal.MustChangePassword && request.URL.Path != "/api/auth/change-password" && request.URL.Path != "/api/auth/logout" && request.URL.Path != "/api/auth/me" {
-			writeError(response, http.StatusPreconditionRequired, "Ganti password awal sebelum menggunakan PANTAS.", "password_change_required")
+		if principal.AccountType == "admin" && principal.MustChangePassword && request.URL.Path != "/api/auth/change-password" && request.URL.Path != "/api/auth/logout" && request.URL.Path != "/api/auth/me" {
+			writeError(response, http.StatusPreconditionRequired, "Ganti password awal admin sebelum menggunakan PANTAS.", "password_change_required")
 			return
 		}
 		request = request.WithContext(auth.WithPrincipal(request.Context(), principal))

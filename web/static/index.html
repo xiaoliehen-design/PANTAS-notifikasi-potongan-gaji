@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#0b3b66">
   <meta name="description" content="PANTAS — Pemantauan Absensi dan Tunjangan Secara Akumulatif">
   <title>PANTAS | BC Tanjung Priok</title>
-  <link rel="stylesheet" href="/styles.css">
-  <script defer src="/app.js?v=20260721-manual-treasury-v7"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260721-sidebar-password-v8">
+  <script defer src="/app.js?v=20260721-sidebar-password-v8"></script>
 </head>
 <body>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
@@ -121,12 +121,23 @@
   </aside>
 
   <dialog id="password-dialog" class="modal">
-    <form id="password-form" method="dialog" class="modal-card">
-      <span class="eyebrow">Keamanan akun</span><h2>Ganti password awal</h2>
-      <p class="muted">Sebelum melanjutkan, buat password yang tidak memuat NIP atau username.</p>
+    <form id="password-form" method="dialog" class="modal-card" novalidate>
+      <div class="data-card-header">
+        <div><span class="eyebrow">Keamanan akun</span><h2>Ubah password</h2></div>
+        <button class="icon-button" type="button" data-close-password aria-label="Tutup">×</button>
+      </div>
+      <p class="muted">Gunakan password yang kuat dan berbeda dari password akun lain.</p>
       <label class="field"><span>Password saat ini</span><input name="current_password" type="password" autocomplete="current-password" required></label>
-      <label class="field"><span>Password baru</span><input name="new_password" type="password" autocomplete="new-password" minlength="10" required><small>Minimal 10 karakter dan 3 jenis karakter.</small></label>
-      <button class="button button-primary button-full" type="submit">Ganti password</button>
+      <label class="field"><span>Password baru</span><input name="new_password" type="password" autocomplete="new-password" maxlength="128" required></label>
+      <div class="password-policy" aria-live="polite">
+        <strong>Password baru harus memenuhi:</strong>
+        <ul>
+          <li data-password-rule="length">10–128 karakter</li>
+          <li data-password-rule="classes">Sedikitnya 3 jenis: huruf besar, huruf kecil, angka, atau simbol</li>
+          <li data-password-rule="identifier">Tidak memuat NIP atau username akun</li>
+        </ul>
+      </div>
+      <button class="button button-primary button-full" type="submit">Ubah password</button>
     </form>
   </dialog>
 
