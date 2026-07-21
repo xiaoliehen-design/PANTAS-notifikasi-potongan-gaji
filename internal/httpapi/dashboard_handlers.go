@@ -26,6 +26,7 @@ func (a *App) dashboard(response http.ResponseWriter, request *http.Request, pri
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(response, http.StatusOK, map[string]any{
 			"current_period": nil, "summary": nil, "deductions": []any{},
+			"leave_breakdown":      []any{},
 			"unread_notifications": 0, "can_monitor": principal.IsSupervisor(),
 		})
 		return
@@ -69,6 +70,11 @@ func (a *App) dashboard(response http.ResponseWriter, request *http.Request, pri
 		a.internalError(response, "dashboard deduction rows", err)
 		return
 	}
+	leaveBreakdown, err := a.loadLeaveBreakdown(request, principal.ID, period.ID)
+	if err != nil {
+		a.internalError(response, "dashboard leave breakdown", err)
+		return
+	}
 	writeJSON(response, http.StatusOK, map[string]any{
 		"current_period": period,
 		"summary": map[string]any{
@@ -77,11 +83,77 @@ func (a *App) dashboard(response http.ResponseWriter, request *http.Request, pri
 			"leave_days": leaveDays, "off_days": offDays,
 		},
 		"deductions":           items,
+		"leave_breakdown":      leaveBreakdown,
 		"can_appeal":           original > 0,
 		"pending_appeal_items": pendingAppeal,
 		"unread_notifications": unread,
 		"can_monitor":          principal.IsSupervisor(),
 	})
+}
+
+type leaveBreakdownDefinition struct {
+	Source string
+	Code   string
+	Label  string
+	Rate   float64
+}
+
+func (a *App) loadLeaveBreakdown(request *http.Request, userID, periodID string) ([]map[string]any, error) {
+	definitions := []leaveBreakdownDefinition{
+		{Source: "leave", Code: "Cuti Tahunan", Label: "Cuti Tahunan", Rate: 0},
+		{Source: "leave", Code: "Cuti Besar", Label: "Cuti Besar", Rate: 0},
+		{Source: "leave", Code: "Cuti Sakit", Label: "Cuti Sakit", Rate: 0},
+		{Source: "leave", Code: "Cuti Alasan Penting", Label: "Cuti Alasan Penting", Rate: 0},
+		{Source: "leave", Code: "Cuti Besar Dipotong", Label: "Cuti Besar Dipotong", Rate: 0.025},
+		{Source: "leave", Code: "Cuti Sakit Dipotong", Label: "Cuti Sakit Dipotong", Rate: 0.025},
+		{Source: "leave", Code: "Cuti Alasan Penting Dipotong", Label: "Cuti Alasan Penting Dipotong", Rate: 0.05},
+		{Source: "status", Code: "I", Label: "Izin Tidak Masuk", Rate: 0.05},
+	}
+	counts := make(map[string]int, len(definitions))
+	rows, err := a.pool.Query(request.Context(), `
+		select coalesce(leave_type, ''), coalesce(attendance_status, ''), count(*)
+		from public.effective_attendance
+		where user_id = $1 and period_id = $2
+		  and (nullif(btrim(leave_type), '') is not null or nullif(btrim(attendance_status), '') is not null)
+		group by leave_type, attendance_status`, userID, periodID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var leaveType, attendanceStatus string
+		var count int
+		if err := rows.Scan(&leaveType, &attendanceStatus, &count); err != nil {
+			return nil, err
+		}
+		if leaveType != "" {
+			counts["leave\x00"+normalizeAttendanceCategory(leaveType)] += count
+		}
+		statusKey := normalizeAttendanceCategory(attendanceStatus)
+		if statusKey == "i" || statusKey == "izin tidak masuk" {
+			counts["status\x00i"] += count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0, len(definitions))
+	for _, definition := range definitions {
+		code := normalizeAttendanceCategory(definition.Code)
+		if definition.Source == "status" && code == "i" {
+			code = "i"
+		}
+		days := counts[definition.Source+"\x00"+code]
+		items = append(items, map[string]any{
+			"source": definition.Source, "code": definition.Code, "label": definition.Label,
+			"days": days, "rate": definition.Rate, "total": float64(days) * definition.Rate,
+		})
+	}
+	return items, nil
+}
+
+func normalizeAttendanceCategory(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
 }
 
 func (a *App) history(response http.ResponseWriter, request *http.Request, principal auth.Principal) {

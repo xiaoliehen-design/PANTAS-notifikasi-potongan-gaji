@@ -13,88 +13,94 @@ import (
 )
 
 type Config struct {
-	Environment            string
-	Port                   string
-	AppURL                 string
-	DatabaseURL            string
-	AppSecret              string
-	TrustProxy             bool
-	CookieSecure           bool
-	SessionTTL             time.Duration
-	SessionIdleTTL         time.Duration
-	SupabaseURL            string
-	SupabaseServiceKey     string
-	SupabaseStorageBucket  string
-	EmailProvider          string
-	BrevoAPIKey            string
-	BrevoAPIURL            string
-	ResendAPIKey           string
-	ResendAPIURL           string
-	EmailFrom              string
-	SMTPHost               string
-	SMTPPort               string
-	SMTPUsername           string
-	SMTPPassword           string
-	SMTPTLSMode            string
-	PhoneProvider          string
-	PhoneWebhookURL        string
-	PhoneWebhookToken      string
-	TwilioAccountSID       string
-	TwilioAuthToken        string
-	TwilioAPIKey           string
-	TwilioAPISecret        string
-	TwilioMessagingSID     string
-	TwilioFrom             string
-	TwilioAPIBaseURL       string
-	BootstrapAdminUsername string
-	BootstrapAdminPassword string
-	BootstrapAdminName     string
-	MaxExcelBytes          int64
-	MaxDocumentBytes       int64
-	WorkerInterval         time.Duration
+	Environment               string
+	Port                      string
+	AppURL                    string
+	DatabaseURL               string
+	AppSecret                 string
+	TrustProxy                bool
+	CookieSecure              bool
+	SessionTTL                time.Duration
+	SessionIdleTTL            time.Duration
+	SupabaseURL               string
+	SupabaseServiceKey        string
+	SupabaseStorageBucket     string
+	EmailProvider             string
+	BrevoAPIKey               string
+	BrevoAPIURL               string
+	ResendAPIKey              string
+	ResendAPIURL              string
+	EmailFrom                 string
+	SMTPHost                  string
+	SMTPPort                  string
+	SMTPUsername              string
+	SMTPPassword              string
+	SMTPTLSMode               string
+	PhoneProvider             string
+	PhoneWebhookURL           string
+	PhoneWebhookToken         string
+	TwilioAccountSID          string
+	TwilioAuthToken           string
+	TwilioAPIKey              string
+	TwilioAPISecret           string
+	TwilioMessagingSID        string
+	TwilioFrom                string
+	TwilioAPIBaseURL          string
+	BootstrapAdminUsername    string
+	BootstrapAdminPassword    string
+	BootstrapAdminName        string
+	BootstrapTreasuryUsername string
+	BootstrapTreasuryPassword string
+	BootstrapTreasuryName     string
+	MaxExcelBytes             int64
+	MaxDocumentBytes          int64
+	WorkerInterval            time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Environment:            env("APP_ENV", "production"),
-		Port:                   env("PORT", "10000"),
-		AppURL:                 strings.TrimRight(env("APP_URL", "http://localhost:10000"), "/"),
-		DatabaseURL:            strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		AppSecret:              strings.TrimSpace(os.Getenv("APP_SECRET")),
-		TrustProxy:             envBool("TRUST_PROXY", true),
-		CookieSecure:           envBool("COOKIE_SECURE", true),
-		SessionTTL:             envDuration("SESSION_TTL", 12*time.Hour),
-		SessionIdleTTL:         envDuration("SESSION_IDLE_TTL", 30*time.Minute),
-		SupabaseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/"),
-		SupabaseServiceKey:     strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
-		SupabaseStorageBucket:  env("SUPABASE_STORAGE_BUCKET", "pantas-appeals"),
-		EmailProvider:          strings.ToLower(env("EMAIL_PROVIDER", "auto")),
-		BrevoAPIKey:            strings.TrimSpace(os.Getenv("BREVO_API_KEY")),
-		BrevoAPIURL:            strings.TrimRight(env("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email"), "/"),
-		ResendAPIKey:           strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
-		ResendAPIURL:           strings.TrimRight(env("RESEND_API_URL", "https://api.resend.com/emails"), "/"),
-		EmailFrom:              envMailAddress("EMAIL_FROM"),
-		SMTPHost:               strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:               env("SMTP_PORT", "587"),
-		SMTPUsername:           strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		SMTPPassword:           strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
-		SMTPTLSMode:            smtpTLSMode(),
-		PhoneProvider:          strings.ToLower(env("PHONE_PROVIDER", "auto")),
-		PhoneWebhookURL:        strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_URL")),
-		PhoneWebhookToken:      strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_TOKEN")),
-		TwilioAccountSID:       strings.TrimSpace(os.Getenv("TWILIO_ACCOUNT_SID")),
-		TwilioAuthToken:        strings.TrimSpace(os.Getenv("TWILIO_AUTH_TOKEN")),
-		TwilioAPIKey:           strings.TrimSpace(os.Getenv("TWILIO_API_KEY")),
-		TwilioAPISecret:        strings.TrimSpace(os.Getenv("TWILIO_API_SECRET")),
-		TwilioMessagingSID:     strings.TrimSpace(os.Getenv("TWILIO_MESSAGING_SERVICE_SID")),
-		TwilioFrom:             strings.TrimSpace(os.Getenv("TWILIO_FROM_NUMBER")),
-		TwilioAPIBaseURL:       strings.TrimRight(env("TWILIO_API_BASE_URL", "https://api.twilio.com/2010-04-01"), "/"),
-		BootstrapAdminUsername: strings.ToLower(strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_USERNAME"))),
-		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
-		BootstrapAdminName:     strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_NAME")),
-		MaxExcelBytes:          envInt64("MAX_EXCEL_BYTES", 20<<20),
-		MaxDocumentBytes:       envInt64("MAX_DOCUMENT_BYTES", 5<<20),
-		WorkerInterval:         envDuration("WORKER_INTERVAL", 5*time.Second),
+		Environment:               env("APP_ENV", "production"),
+		Port:                      env("PORT", "10000"),
+		AppURL:                    strings.TrimRight(env("APP_URL", "http://localhost:10000"), "/"),
+		DatabaseURL:               strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		AppSecret:                 strings.TrimSpace(os.Getenv("APP_SECRET")),
+		TrustProxy:                envBool("TRUST_PROXY", true),
+		CookieSecure:              envBool("COOKIE_SECURE", true),
+		SessionTTL:                envDuration("SESSION_TTL", 12*time.Hour),
+		SessionIdleTTL:            envDuration("SESSION_IDLE_TTL", 30*time.Minute),
+		SupabaseURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/"),
+		SupabaseServiceKey:        strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
+		SupabaseStorageBucket:     env("SUPABASE_STORAGE_BUCKET", "pantas-appeals"),
+		EmailProvider:             strings.ToLower(env("EMAIL_PROVIDER", "auto")),
+		BrevoAPIKey:               strings.TrimSpace(os.Getenv("BREVO_API_KEY")),
+		BrevoAPIURL:               strings.TrimRight(env("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email"), "/"),
+		ResendAPIKey:              strings.TrimSpace(os.Getenv("RESEND_API_KEY")),
+		ResendAPIURL:              strings.TrimRight(env("RESEND_API_URL", "https://api.resend.com/emails"), "/"),
+		EmailFrom:                 envMailAddress("EMAIL_FROM"),
+		SMTPHost:                  strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:                  env("SMTP_PORT", "587"),
+		SMTPUsername:              strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:              strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
+		SMTPTLSMode:               smtpTLSMode(),
+		PhoneProvider:             strings.ToLower(env("PHONE_PROVIDER", "auto")),
+		PhoneWebhookURL:           strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_URL")),
+		PhoneWebhookToken:         strings.TrimSpace(os.Getenv("PHONE_OTP_WEBHOOK_TOKEN")),
+		TwilioAccountSID:          strings.TrimSpace(os.Getenv("TWILIO_ACCOUNT_SID")),
+		TwilioAuthToken:           strings.TrimSpace(os.Getenv("TWILIO_AUTH_TOKEN")),
+		TwilioAPIKey:              strings.TrimSpace(os.Getenv("TWILIO_API_KEY")),
+		TwilioAPISecret:           strings.TrimSpace(os.Getenv("TWILIO_API_SECRET")),
+		TwilioMessagingSID:        strings.TrimSpace(os.Getenv("TWILIO_MESSAGING_SERVICE_SID")),
+		TwilioFrom:                strings.TrimSpace(os.Getenv("TWILIO_FROM_NUMBER")),
+		TwilioAPIBaseURL:          strings.TrimRight(env("TWILIO_API_BASE_URL", "https://api.twilio.com/2010-04-01"), "/"),
+		BootstrapAdminUsername:    strings.ToLower(strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_USERNAME"))),
+		BootstrapAdminPassword:    os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
+		BootstrapAdminName:        strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_NAME")),
+		BootstrapTreasuryUsername: strings.ToLower(strings.TrimSpace(os.Getenv("BOOTSTRAP_TREASURY_USERNAME"))),
+		BootstrapTreasuryPassword: os.Getenv("BOOTSTRAP_TREASURY_PASSWORD"),
+		BootstrapTreasuryName:     strings.TrimSpace(os.Getenv("BOOTSTRAP_TREASURY_NAME")),
+		MaxExcelBytes:             envInt64("MAX_EXCEL_BYTES", 20<<20),
+		MaxDocumentBytes:          envInt64("MAX_DOCUMENT_BYTES", 5<<20),
+		WorkerInterval:            envDuration("WORKER_INTERVAL", 5*time.Second),
 	}
 
 	var problems []string
@@ -121,6 +127,22 @@ func Load() (Config, error) {
 	}
 	if cfg.BootstrapAdminPassword != "" && !validAdminPassword(cfg.BootstrapAdminPassword, cfg.BootstrapAdminUsername) {
 		problems = append(problems, "BOOTSTRAP_ADMIN_PASSWORD harus 12-128 karakter, tidak memuat username, dan memakai sedikitnya tiga jenis karakter")
+	}
+	treasuryConfigured := cfg.BootstrapTreasuryUsername != "" || cfg.BootstrapTreasuryPassword != "" || cfg.BootstrapTreasuryName != ""
+	if treasuryConfigured && (cfg.BootstrapTreasuryUsername == "" || cfg.BootstrapTreasuryPassword == "" || cfg.BootstrapTreasuryName == "") {
+		problems = append(problems, "konfigurasi bootstrap perbendaharaan harus diisi lengkap")
+	}
+	if cfg.BootstrapTreasuryUsername != "" && !validAdminUsername(cfg.BootstrapTreasuryUsername) {
+		problems = append(problems, "BOOTSTRAP_TREASURY_USERNAME harus 3-64 karakter, diawali huruf, dan hanya memakai huruf kecil, angka, titik, garis bawah, atau tanda hubung")
+	}
+	if cfg.BootstrapTreasuryPassword != "" && !validAdminPassword(cfg.BootstrapTreasuryPassword, cfg.BootstrapTreasuryUsername) {
+		problems = append(problems, "BOOTSTRAP_TREASURY_PASSWORD harus 12-128 karakter, tidak memuat username, dan memakai sedikitnya tiga jenis karakter")
+	}
+	if cfg.BootstrapTreasuryUsername != "" && cfg.BootstrapTreasuryUsername == cfg.BootstrapAdminUsername {
+		problems = append(problems, "username administrator sistem dan perbendaharaan harus berbeda")
+	}
+	if cfg.BootstrapTreasuryPassword != "" && cfg.BootstrapTreasuryPassword == cfg.BootstrapAdminPassword {
+		problems = append(problems, "password awal administrator sistem dan perbendaharaan harus berbeda")
 	}
 	if cfg.SupabaseURL == "" || cfg.SupabaseServiceKey == "" {
 		problems = append(problems, "SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY wajib diisi untuk dokumen banding")

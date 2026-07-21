@@ -9,6 +9,17 @@ import (
 	"github.com/bcpriok/pantas/internal/config"
 )
 
+func TestPrincipalAdminRoles(t *testing.T) {
+	system := Principal{AccountType: "admin", AdminRole: "system_admin", IsAdmin: true}
+	treasury := Principal{AccountType: "admin", AdminRole: "treasury_admin"}
+	if !system.IsSystemAdmin() || !system.IsSupervisor() || system.IsTreasuryAdmin() {
+		t.Fatalf("unexpected system administrator permissions: %#v", system)
+	}
+	if !treasury.IsTreasuryAdmin() || treasury.IsSystemAdmin() || treasury.IsSupervisor() {
+		t.Fatalf("unexpected treasury administrator permissions: %#v", treasury)
+	}
+}
+
 func TestValidatePassword(t *testing.T) {
 	nip := "199001012010011001"
 	tests := []struct {

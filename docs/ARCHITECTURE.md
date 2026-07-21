@@ -22,8 +22,9 @@ Go menyajikan API dan aset web dari satu binary. Browser tidak menerima connecti
 | Kepala Bidang/Bagian | Diri sendiri | Tiap seksi/subbagian sebagai agregat | Kepala seksi/subbagian di bawah bidang/bagian |
 | Kepala Kantor | Diri sendiri | Bidang/bagian sebagai agregat; Fungsional agregat dengan drill-down | Kepala bidang/bagian dan Fungsional |
 | Administrator sistem | Tidak memiliki data pegawai pribadi | Seluruh kantor dan drill-down seluruh unit | Keputusan final semua banding |
+| Administrator perbendaharaan | Tidak memiliki data pegawai pribadi | Rekap nama, NIP, unit, dan potongan efektif periode berjalan | Tidak ada |
 
-Administrator adalah akun sistem pada `admin_accounts`, bukan pegawai pada `users`. Akun pegawai tidak dapat diberi hak admin dari menu pengelolaan pengguna. Semua endpoint admin tetap memerlukan principal bertipe admin.
+Administrator adalah akun sistem pada `admin_accounts`, bukan pegawai pada `users`. Kolom `admin_role` membedakan `system_admin` dan `treasury_admin`. Akun pegawai tidak dapat diberi hak admin dari menu pengelolaan pengguna. Backend tetap memeriksa peran untuk setiap endpoint; admin perbendaharaan tidak dapat mengakses import, koreksi, hapus data, parameter, pengguna, struktur, atau keputusan banding.
 
 Administrator mengelola bidang/bagian dan seksi/subbagian melalui menu **Struktur Organisasi**. Relasi `units.parent_id` menetapkan bahwa bidang/bagian berada di bawah kantor dan seksi/subbagian berada di bawah tepat satu bidang/bagian. Perubahan induk seksi langsung mengubah cakupan monitoring serta verifikasi atasan. API dan trigger database sama-sama menolak relasi yang tidak valid, penonaktifan unit yang masih memiliki anggota aktif, dan penghapusan unit yang masih memiliki dependensi.
 
@@ -64,6 +65,7 @@ Setiap tanggal memiliki status, komentar, dokumen, dan potongan hasil sendiri. P
 - `accounts`, `admin_accounts`: identitas autentikasi dan administrator non-pegawai.
 - `units`, `users`, `user_assignment_history`: struktur organisasi yang dapat dikelola admin, pegawai, dan mutasi.
 - `reporting_periods`, `import_batches`, `attendance_records`: data bulanan berversi.
+- `attendance_record_changes`: snapshot sebelum/sesudah input dan koreksi manual beserta alasan dan aktor.
 - `appeals`, `appeal_items`, `appeal_documents`: proses banding per hari.
 - `deduction_rules`, `appeal_reason_categories`, `parameters`: konfigurasi admin.
 - `sessions`, `login_attempts`, `recovery_otps`, `pending_contact_changes`: keamanan akun.

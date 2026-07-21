@@ -40,6 +40,10 @@ func main() {
 		logger.Error("bootstrap admin failed; pastikan migration sudah dijalankan", "error", err)
 		os.Exit(1)
 	}
+	if err := database.BootstrapTreasuryAdmin(rootCtx, pool, cfg.BootstrapTreasuryUsername, cfg.BootstrapTreasuryName, cfg.BootstrapTreasuryPassword); err != nil {
+		logger.Error("bootstrap treasury admin failed; pastikan migration V7 sudah dijalankan", "error", err)
+		os.Exit(1)
+	}
 
 	worker := mailer.New(pool, cfg, logger)
 	authService := auth.New(pool, cfg, worker)

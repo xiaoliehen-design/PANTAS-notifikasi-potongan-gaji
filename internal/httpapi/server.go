@@ -104,6 +104,13 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /api/admin/imports/preview", a.withAdmin(a.adminImportPreview))
 	mux.Handle("POST /api/admin/imports/{id}/publish", a.withAdmin(a.adminImportPublish))
 	mux.Handle("DELETE /api/admin/imports/{id}", a.withAdmin(a.adminImportReject))
+	mux.Handle("GET /api/admin/deductions", a.withAdmin(a.adminDeductions))
+	mux.Handle("GET /api/admin/deductions/options", a.withAdmin(a.adminDeductionOptions))
+	mux.Handle("POST /api/admin/deductions", a.withAdmin(a.adminCreateManualDeduction))
+	mux.Handle("PATCH /api/admin/deductions/{id}", a.withAdmin(a.adminEditDeduction))
+	mux.Handle("DELETE /api/admin/periods/{id}/deductions", a.withAdmin(a.adminDeletePeriodDeductions))
+	mux.Handle("GET /api/treasury/recap", a.withTreasury(a.treasuryRecap))
+	mux.Handle("GET /api/treasury/recap.xlsx", a.withTreasury(a.treasuryRecapXLSX))
 	mux.HandleFunc("/", a.serveSPA)
 	return a.securityHeaders(a.requestLog(a.recoverer(a.sameOrigin(mux))))
 }
@@ -132,8 +139,18 @@ func (a *App) withAuth(next handlerFunc) http.Handler {
 
 func (a *App) withAdmin(next handlerFunc) http.Handler {
 	return a.withAuth(func(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
-		if !principal.IsAdmin {
+		if !principal.IsSystemAdmin() {
 			writeError(response, http.StatusForbidden, "Akses administrator diperlukan.", "forbidden")
+			return
+		}
+		next(response, request, principal)
+	})
+}
+
+func (a *App) withTreasury(next handlerFunc) http.Handler {
+	return a.withAuth(func(response http.ResponseWriter, request *http.Request, principal auth.Principal) {
+		if !principal.IsSystemAdmin() && !principal.IsTreasuryAdmin() {
+			writeError(response, http.StatusForbidden, "Akses perbendaharaan diperlukan.", "forbidden")
 			return
 		}
 		next(response, request, principal)

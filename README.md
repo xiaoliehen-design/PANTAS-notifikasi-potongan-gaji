@@ -13,6 +13,7 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Administrator merupakan akun sistem terpisah, login memakai username dan password awal dari environment Render, serta tidak tercatat sebagai pegawai.
 - Profil untuk mengubah password serta memverifikasi email dan nomor HP pemulihan.
 - Dashboard otomatis mengikuti periode terbaru yang dipublikasikan admin.
+- Delapan kategori cuti/izin ditampilkan terpisah; kategori tanpa potongan tetap tercatat, sedangkan kategori bertanda dipotong memakai tarif 2,5% atau 5% sesuai aturan.
 - Potongan berjalan, detail per tanggal, grafik riwayat default 12 bulan, dan filter rentang bulan/tahun.
 - Ringkasan hari kerja (`P=1`, `M=1`, `PM=2`), lembur (`L1=1`, `L2=1`), cuti, dan off.
 - Banding per hari potongan dengan kategori alasan dan dokumen PDF/JPG/PNG opsional.
@@ -23,6 +24,8 @@ Backend ditulis dengan Go, data utama disimpan di PostgreSQL Supabase, dokumen b
 - Admin dapat menambah, memindahkan, menonaktifkan/menghapus, dan mereset password pengguna.
 - Admin dapat menambah, mengubah, memindahkan, menonaktifkan, dan menghapus bidang/bagian maupun seksi/subbagian melalui menu **Struktur Organisasi**.
 - Admin dapat menambah dan mengubah aturan potongan langsung dari Parameter Sistem.
+- Admin dapat menambah potongan per pegawai, mengoreksi persentase dengan alasan yang diaudit, serta menghapus seluruh data potongan satu periode setelah konfirmasi khusus.
+- Akun admin perbendaharaan hanya menampilkan rekap periode berjalan (nama, NIP, unit, dan potongan efektif) serta dapat mengekspornya ke Excel.
 - Import workbook bulanan dengan validasi format, NIP, tanggal, duplikasi, unit, hash file, staging, dan publikasi atomik.
 - Notifikasi dalam aplikasi, email, dan SMS setelah periode dipublikasikan; email/SMS hanya dijadwalkan untuk kontak terverifikasi dan angka notifikasi dihapus ketika panel notifikasi dibuka.
 - Pengiriman OTP email/nomor HP diverifikasi langsung terhadap respons provider dan kegagalan tidak memutus sesi pengguna.
@@ -52,13 +55,15 @@ Contoh yang diminta juga terpetakan: Heru Prayitno sebagai Kepala Bagian Umum da
    - `supabase/migrations/003_fix_pgcrypto_schema.sql`
    - `supabase/migrations/004_manage_organization_units.sql`
    - `supabase/seed/002_employees_from_reference.sql`
+   - `supabase/migrations/005_manual_deductions_treasury.sql`
 3. Salin connection string **Session pooler port 5432** dan tambahkan `sslmode=require` bila belum ada.
 4. Buat repository GitHub **private**, lalu unggah seluruh isi folder ini ke root repository.
 5. Di Render pilih **New → Blueprint**, hubungkan repository, dan gunakan `render.yaml`.
 6. Isi seluruh secret yang ditandai `sync: false`; petunjuk lengkap ada di [docs/RENDER.md](docs/RENDER.md).
 7. Setelah URL Render tersedia, set `APP_URL` ke URL HTTPS tersebut lalu redeploy.
 8. Login dengan `BOOTSTRAP_ADMIN_USERNAME` dan `BOOTSTRAP_ADMIN_PASSWORD`, lalu segera ganti password awal.
-9. Buka **Import Data**, unggah workbook bulanan, periksa preview, lalu klik **Publikasikan**.
+9. Login terpisah dengan `BOOTSTRAP_TREASURY_USERNAME` dan `BOOTSTRAP_TREASURY_PASSWORD`, lalu segera ganti password awal.
+10. Buka **Import Data**, unggah workbook bulanan, periksa preview, lalu klik **Publikasikan**.
 
 Petunjuk terperinci:
 
@@ -67,6 +72,7 @@ Petunjuk terperinci:
 - [Pengaturan email dan OTP nomor HP](docs/EMAIL_PHONE_SETUP.md)
 - [Upgrade administrator non-pegawai](docs/UPGRADE_ADMIN.md)
 - [Upgrade pengelolaan struktur organisasi V6](docs/UPGRADE_STRUCTURE_V6.md)
+- [Upgrade V7: cuti, koreksi manual, dan perbendaharaan](docs/UPGRADE_V7_MANUAL_TREASURY.md)
 - [Format workbook import](docs/EXCEL_FORMAT.md)
 - [Arsitektur dan matriks akses](docs/ARCHITECTURE.md)
 - [Keamanan dan operasi](docs/SECURITY.md)
@@ -112,7 +118,7 @@ Untuk menguji langsung workbook contoh yang diberikan:
 PANTAS_SAMPLE_XLSX='/path/Upload dokumen.xlsx' go test ./internal/importer -run TestSuppliedWorkbookWhenConfigured -v
 ```
 
-CI GitHub menjalankan pemeriksaan format, `go vet`, seluruh test, dan build pada setiap pull request. Build menonaktifkan penyisipan metadata VCS agar hasil konsisten di GitHub Actions dan Docker.
+CI GitHub menjalankan pemeriksaan format, `go vet`, seluruh test, dan build pada setiap pull request. Test V7 juga memeriksa aturan cuti/izin, validasi alasan koreksi, rekonsiliasi komponen potongan, konfirmasi penghapusan periode, serta struktur ekspor XLSX. Build menonaktifkan penyisipan metadata VCS agar hasil konsisten di GitHub Actions dan Docker.
 
 ## Struktur repository
 

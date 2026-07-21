@@ -13,8 +13,9 @@ Di **SQL Editor**, jalankan file berikut secara berurutan dan tunggu sampai masi
 3. `supabase/migrations/003_fix_pgcrypto_schema.sql`
 4. `supabase/migrations/004_manage_organization_units.sql`
 5. `supabase/seed/002_employees_from_reference.sql`
+6. `supabase/migrations/005_manual_deductions_treasury.sql`
 
-Migration pertama membuat skema utama. Migration kedua membuat identitas akun dan tabel administrator yang terpisah dari pegawai, serta memigrasikan referensi audit lama. Migration ketiga memastikan fungsi password `pgcrypto` memakai schema `extensions` milik Supabase. Migration keempat menjaga relasi kantor → bidang/bagian → seksi/subbagian dan melindungi unit sistem. Seed berikutnya membuat struktur organisasi dan 1.123 akun pegawai.
+Migration pertama membuat skema utama. Migration kedua membuat identitas akun dan tabel administrator yang terpisah dari pegawai, serta memigrasikan referensi audit lama. Migration ketiga memastikan fungsi password `pgcrypto` memakai schema `extensions` milik Supabase. Migration keempat menjaga relasi kantor → bidang/bagian → seksi/subbagian dan melindungi unit sistem. Seed membuat struktur organisasi dan 1.123 akun pegawai. Migration kelima menambahkan kategori cuti/izin V7, jejak koreksi manual, dan peran admin perbendaharaan.
 
 Seed mengandung data pribadi. Jangan menaruhnya di repository publik.
 
@@ -26,7 +27,7 @@ Jalankan di SQL Editor:
 select unit_type, count(*) from public.units group by unit_type order by unit_type;
 select position_role, count(*) from public.users group by position_role order by position_role;
 select name, nip, position_role from public.users where position_role = 'office_head';
-select username, name, is_active from public.admin_accounts;
+select username, name, admin_role, is_active from public.admin_accounts;
 select id, name, public from storage.buckets where id = 'pantas-appeals';
 select u.code, u.name, u.unit_type, p.name as parent_name
 from public.units u
@@ -34,7 +35,7 @@ left join public.units p on p.id = u.parent_id
 order by u.unit_type, u.sort_order;
 ```
 
-Hasil utama yang diharapkan sebelum aplikasi pertama kali dijalankan: 59 unit, 1.123 pengguna, satu `office_head` bernama Adhang Noegroho Adhi, dan bucket `public=false`. Baris `admin_accounts` dibuat oleh aplikasi saat startup setelah environment bootstrap admin diisi.
+Hasil utama yang diharapkan sebelum aplikasi pertama kali dijalankan: 59 unit, 1.123 pengguna, satu `office_head` bernama Adhang Noegroho Adhi, dan bucket `public=false`. Baris `admin_accounts` dibuat oleh aplikasi saat startup setelah environment bootstrap admin sistem dan perbendaharaan diisi.
 
 ## 4. Connection string
 

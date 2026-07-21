@@ -24,10 +24,13 @@ Blueprint menggunakan plan `starter`, health check `/healthz`, dan auto-deploy s
 | `BOOTSTRAP_ADMIN_USERNAME` | Username admin, misalnya `admin.pantas` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Password awal kuat, 12–128 karakter dan minimal tiga jenis karakter |
 | `BOOTSTRAP_ADMIN_NAME` | Nama tampilan administrator |
+| `BOOTSTRAP_TREASURY_USERNAME` | Username khusus admin perbendaharaan; harus berbeda dari admin sistem |
+| `BOOTSTRAP_TREASURY_PASSWORD` | Password awal admin perbendaharaan, 12–128 karakter dan berbeda dari password admin sistem |
+| `BOOTSTRAP_TREASURY_NAME` | Nama tampilan admin perbendaharaan |
 | `EMAIL_PROVIDER` | `brevo` untuk Render Free; `smtp` hanya bila plan mengizinkan port SMTP; `resend` untuk domain terverifikasi |
 | `EMAIL_FROM` | Nama dan alamat pengirim yang sudah diverifikasi pada provider |
 
-Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak memerlukan NIP dan tidak ikut dalam monitoring pegawai. Username dinormalisasi menjadi huruf kecil. Password environment hanya digunakan saat akun pertama kali dibuat dan tidak menimpa password yang sudah diganti melalui aplikasi.
+Kedua jenis administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak memerlukan NIP dan tidak ikut dalam monitoring pegawai. Admin sistem memiliki seluruh menu administrasi. Admin perbendaharaan hanya memiliki rekap potongan efektif periode berjalan dan ekspor Excel. Username dinormalisasi menjadi huruf kecil. Password environment hanya digunakan saat akun pertama kali dibuat dan tidak menimpa password yang sudah diganti melalui aplikasi.
 
 ## Environment opsional/default
 
@@ -58,13 +61,14 @@ Administrator disimpan pada `admin_accounts`, bukan `users`, sehingga tidak meme
 
 ## Urutan deployment yang aman
 
-1. Jalankan migration `001`, `002`, `003`, lalu seed Supabase.
+1. Jalankan migration `001`, `002`, `003`, `004`, seed, lalu migration `005` di Supabase.
 2. Buat Blueprint Render dan isi semua secret.
 3. Deploy pertama.
 4. Salin URL `https://...onrender.com`, set sebagai `APP_URL`, lalu redeploy.
 5. Buka `/healthz`; respons harus `{"status":"ok","database":"ok"}`.
-6. Login memakai username/password bootstrap admin dan segera ganti password awal.
-7. Uji import pada satu periode, banding satu hari, verifikasi atasan, dan keputusan admin.
+6. Login memakai username/password bootstrap admin sistem dan segera ganti password awal.
+7. Login memakai akun bootstrap perbendaharaan, ganti password, uji rekap periode berjalan, dan ekspor Excel.
+8. Uji import pada satu periode, input/koreksi manual, banding satu hari, verifikasi atasan, dan keputusan admin.
 
 Jika memakai custom domain, ubah `APP_URL` ke custom domain HTTPS yang benar. Origin check PANTAS sengaja menolak request mutasi dari origin lain.
 

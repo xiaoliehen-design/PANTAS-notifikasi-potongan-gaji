@@ -355,7 +355,7 @@ func (s *Service) loadRules(ctx context.Context) (map[string]Rule, error) {
 		if err := rows.Scan(&rule.SourceField, &rule.Code, &rule.Label, &rule.Rate); err != nil {
 			return nil, err
 		}
-		result[rule.SourceField+"\x00"+rule.Code] = rule
+		result[ruleKey(rule.SourceField, rule.Code)] = rule
 	}
 	return result, rows.Err()
 }
@@ -372,13 +372,22 @@ func applyRules(record *RawRecord, rules map[string]Rule) {
 		if value == "" {
 			continue
 		}
-		if rule, ok := rules[field+"\x00"+value]; ok {
+		if rule, ok := rules[ruleKey(field, value)]; ok {
 			record.DeductionRate += rule.Rate
 			record.DeductionComponents = append(record.DeductionComponents, DeductionComponent{
 				SourceField: field, Code: value, Label: rule.Label, Rate: rule.Rate,
 			})
 		}
 	}
+}
+
+func ruleKey(field, value string) string {
+	field = strings.ToLower(strings.TrimSpace(field))
+	value = strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+	if field == "status" && value == "izin tidak masuk" {
+		value = "i"
+	}
+	return field + "\x00" + value
 }
 
 func normalizeUnit(value string) string {

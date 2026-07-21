@@ -46,12 +46,17 @@ Default migration berisi tarif yang ditemukan pada workbook rekapitulasi:
 | PSW | PSW2 | 1% |
 | PSW | PSW3 | 1,25% |
 | PSW | PSW4 / LA | 2,5% |
-| Cuti | Cuti Alasan Penting Dipotong | 5% |
+| Cuti | Cuti Tahunan | 0% |
+| Cuti | Cuti Besar | 0% |
+| Cuti | Cuti Sakit | 0% |
+| Cuti | Cuti Alasan Penting | 0% |
 | Cuti | Cuti Besar Dipotong | 2,5% |
 | Cuti | Cuti Sakit Dipotong | 2,5% |
-| Status | I / TK | 5% |
+| Cuti | Cuti Alasan Penting Dipotong | 5% |
+| Status | I / Izin Tidak Masuk | 5% |
+| Status | TK / Tanpa keterangan | 5% |
 
-Jika satu hari memuat beberapa kode yang memiliki tarif, tarif hari tersebut dijumlahkan dan setiap komponennya disimpan. Admin dapat mengubah label, tarif, atau status aktif aturan sebelum import berikutnya; publikasi lama tidak dihitung ulang.
+Importer menerima kode `I` maupun teks lengkap `Izin Tidak Masuk` pada kolom Status. Jika satu hari memuat beberapa kode yang memiliki tarif, tarif hari tersebut dijumlahkan dan setiap komponennya disimpan. Kategori bertarif 0% tetap disimpan agar rincian cuti dapat ditampilkan terpisah. Admin dapat mengubah label, tarif, atau status aktif aturan sebelum import berikutnya; publikasi lama tidak dihitung ulang.
 
 ## Validasi sebelum publikasi
 

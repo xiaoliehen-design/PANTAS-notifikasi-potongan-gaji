@@ -200,7 +200,7 @@ function showApp() {
     return;
   }
   if (!location.hash) {
-    location.hash = state.user.is_admin ? "#monitoring" : "#dashboard";
+    location.hash = state.user.admin_role === "treasury_admin" ? "#treasury-recap" : state.user.is_admin ? "#monitoring" : "#dashboard";
     return;
   }
   renderRoute();
@@ -317,7 +317,11 @@ const baseNavigation = [
 ];
 
 function buildNavigation() {
-  const items = state.user.is_admin ? [
+  const items = state.user.admin_role === "treasury_admin" ? [
+    { section: "Perbendaharaan" },
+    { id: "treasury-recap", label: "Rekap Potongan Efektif", icon: "▤" },
+    { id: "profile", label: "Profil & Keamanan", icon: "○" },
+  ] : state.user.is_admin ? [
     { section: "Administrator" },
     { id: "monitoring", label: "Monitoring Kantor", icon: "◎" },
     { id: "warnings", label: "Peringatan", icon: "△" },
@@ -325,6 +329,8 @@ function buildNavigation() {
     { id: "admin-users", label: "Pengguna", icon: "◉" },
     { id: "admin-units", label: "Struktur Organisasi", icon: "▦" },
     { id: "admin-imports", label: "Import Data", icon: "⇧" },
+    { id: "admin-deductions", label: "Kelola Potongan", icon: "≣" },
+    { id: "treasury-recap", label: "Rekap Perbendaharaan", icon: "▤" },
     { id: "admin-parameters", label: "Parameter", icon: "⚙" },
     { id: "profile", label: "Profil & Keamanan", icon: "○" },
   ] : [...baseNavigation];
@@ -375,6 +381,10 @@ async function renderRoute() {
   if (!state.user) return;
   const raw = location.hash.replace(/^#/, "") || "dashboard";
   const [route] = raw.split("?");
+  if (state.user.admin_role === "treasury_admin" && !["treasury-recap", "profile"].includes(route)) {
+    state.routeController?.abort();
+    return navigate("treasury-recap");
+  }
   if (state.user.is_admin && ["dashboard", "history", "deductions", "appeals", "reviews"].includes(route)) {
     state.routeController?.abort();
     return navigate("monitoring");
@@ -392,7 +402,8 @@ async function renderRoute() {
     warnings: ["Deteksi dini", "Peringatan"], reviews: ["Alur banding", "Verifikasi Atasan"],
     "admin-reviews": ["Alur banding", "Keputusan Administrator"], "admin-users": ["Administrasi", "Pengguna"],
     "admin-units": ["Administrasi", "Struktur Organisasi"],
-    "admin-imports": ["Administrasi", "Import Data Bulanan"], "admin-parameters": ["Administrasi", "Parameter Sistem"],
+    "admin-imports": ["Administrasi", "Import Data Bulanan"], "admin-deductions": ["Administrasi", "Kelola Potongan"],
+    "treasury-recap": ["Perbendaharaan", "Rekap Potongan Efektif"], "admin-parameters": ["Administrasi", "Parameter Sistem"],
   };
   const label = labels[route] || ["PANTAS", "Halaman"];
   $("#page-kicker").textContent = label[0]; $("#page-title").textContent = label[1];
@@ -405,7 +416,8 @@ async function renderRoute() {
       warnings: renderWarnings, reviews: context => renderReviews(false, context),
       "admin-reviews": context => renderReviews(true, context), "admin-users": context => renderAdminUsers(1, context),
       "admin-units": renderAdminUnits,
-      "admin-imports": renderAdminImports, "admin-parameters": renderAdminParameters,
+      "admin-imports": renderAdminImports, "admin-deductions": renderAdminDeductions,
+      "treasury-recap": renderTreasuryRecap, "admin-parameters": renderAdminParameters,
     };
     if (!handlers[route]) return navigate("dashboard");
     await handlers[route](context);
@@ -434,7 +446,7 @@ async function renderDashboard(context = activeRouteContext("dashboard")) {
       ${kpi("Potongan efektif", percent(summary.effective_deduction), "Setelah keputusan banding", "%", summary.effective_deduction > 0 ? "kpi-danger" : "kpi-green")}
       ${kpi("Hari kerja", numberID(summary.work_days), "P=1 · M=1 · PM=2", "▣", "")}
       ${kpi("Hari lembur", numberID(summary.overtime_days), "L1 dan L2", "↗", "kpi-gold")}
-      ${kpi("Cuti / Off", `${summary.leave_days} / ${summary.off_days}`, "Hari tercatat", "○", "kpi-green")}
+      ${kpi("Cuti", numberID(summary.leave_days), "Dipisahkan menurut jenis", "○", "kpi-green")}
     </section>
     <section class="grid content-grid">
       <div class="panel"><div class="panel-header"><div><h3>Tren 12 periode terakhir</h3><p>Potongan awal dibanding potongan efektif</p></div><button class="button button-small button-ghost" data-go="history">Atur rentang</button></div><div class="panel-body"><div class="chart-wrap"><canvas id="history-chart" role="img" aria-label="Grafik riwayat potongan"></canvas></div></div></div>
@@ -444,6 +456,7 @@ async function renderDashboard(context = activeRouteContext("dashboard")) {
         </div></div>${appealCallout}
       </div>
     </section>
+    <section class="panel section-top"><div class="panel-header"><div><h3>Rincian cuti dan izin tidak masuk</h3><p>Setiap jenis ditampilkan terpisah beserta tarif per hari</p></div></div>${leaveBreakdownTable(dashboard.leave_breakdown || [])}</section>
     <section class="panel section-top"><div class="panel-header"><div><h3>Detail potongan periode berjalan</h3><p>Hanya tanggal dengan potongan yang ditampilkan</p></div><button class="button button-small button-ghost" data-go="deductions">Lihat lengkap</button></div>${deductionTable(dashboard.deductions, 5)}</section>`;
   bindGoButtons();
   requestAnimationFrame(() => { if (isCurrentRouteContext(context)) drawHistoryChart(historyData.points); });
@@ -722,6 +735,139 @@ function bindImportActions(){
   $$('[data-reject-import]').forEach(button=>button.addEventListener("click",async()=>{if(!await confirmAction("Batalkan draft?","Data staging pada draft tidak akan dipublikasikan.",true))return;await api(`/api/admin/imports/${button.dataset.rejectImport}`,{method:"DELETE"});await renderAdminImports();}));
 }
 
+async function renderAdminDeductions(context = activeRouteContext("admin-deductions")) {
+  const query = new URLSearchParams(location.hash.split("?")[1] || "");
+  const params = new URLSearchParams();
+  if (query.get("period_id")) params.set("period_id", query.get("period_id"));
+  if (query.get("q")) params.set("q", query.get("q"));
+  params.set("page", query.get("page") || "1");
+  params.set("limit", "50");
+  const [data, options] = await Promise.all([
+    routeAPI(`/api/admin/deductions?${params}`, context),
+    routeAPI("/api/admin/deductions/options", context),
+  ]);
+  if (!data.current_period) {
+    page.innerHTML = `${pageIntro("Kelola potongan", "Input dan koreksi manual tersedia setelah suatu periode dipublikasikan.")} ${emptyState("□", "Belum ada periode", "Publikasikan file Excel terlebih dahulu melalui menu Import Data.")}`;
+    return;
+  }
+  const period = data.current_period;
+  const actions = `<button class="button button-primary" data-manual-deduction>+ Input perorangan</button><button class="button button-danger" data-delete-period>Hapus data bulan ini</button>`;
+  page.innerHTML = `${pageIntro("Kelola potongan", "Input perorangan, koreksi manual, dan penghapusan satu periode selalu dicatat pada audit trail.", actions)}
+    <section class="panel"><form id="deduction-admin-filter" class="filter-bar"><label class="field"><span>Periode</span><select name="period_id">${data.periods.map(item=>`<option value="${item.id}" ${item.id===period.id?"selected":""}>${h(item.label)}</option>`).join("")}</select></label><label class="field grow"><span>Pencarian</span><input name="q" value="${h(query.get("q")||"")}" placeholder="Nama, NIP, atau unit"></label><button class="button button-secondary">Terapkan</button></form>${adminDeductionTable(data.items)}<div class="pagination"><button class="button button-small button-ghost" data-deduction-page="${Math.max(1,data.page-1)}" ${data.page<=1?"disabled":""}>Sebelumnya</button><span class="period-pill">${data.page} · ${numberID(data.total)} data</span><button class="button button-small button-ghost" data-deduction-page="${data.page+1}" ${data.page*data.limit>=data.total?"disabled":""}>Berikutnya</button></div></section>`;
+  $("#deduction-admin-filter").addEventListener("submit", event => {
+    event.preventDefault();
+    const values = formJSON(event.currentTarget);
+    const next = new URLSearchParams({period_id: values.period_id, page: "1"});
+    if (values.q.trim()) next.set("q", values.q.trim());
+    navigate("admin-deductions", `?${next}`);
+  });
+  $$('[data-deduction-page]').forEach(button=>button.addEventListener("click",()=>{
+    const next = new URLSearchParams({period_id: period.id, page: button.dataset.deductionPage});
+    if (query.get("q")) next.set("q", query.get("q"));
+    navigate("admin-deductions", `?${next}`);
+  }));
+  $("[data-manual-deduction]").addEventListener("click",()=>openManualDeductionDialog(options, period));
+  $("[data-delete-period]").addEventListener("click",()=>openDeletePeriodDialog(period));
+  $$('[data-edit-deduction]').forEach(button=>button.addEventListener("click",()=>openEditDeductionDialog(JSON.parse(button.dataset.item))));
+}
+
+function openManualDeductionDialog(options, period) {
+  const dialog = dynamicDialog("Input potongan perorangan", `<form class="stack-lg" id="manual-deduction-form">
+    <div class="callout callout-info"><span>i</span><div>Jika pegawai dan tanggal sudah ada dari Excel, data hari tersebut akan dikoreksi dan sumber aslinya tetap tercatat pada riwayat audit.</div></div>
+    <label class="field"><span>Periode</span><select name="period_id" required>${options.periods.map(item=>`<option value="${item.id}" ${item.id===period.id?"selected":""}>${h(item.label)} · ${formatDate(item.start)}–${formatDate(item.end)}</option>`).join("")}</select></label>
+    <label class="field"><span>Pegawai</span><select name="user_id" required><option value="">Pilih pegawai</option>${options.users.map(user=>`<option value="${user.id}">${h(user.name)} · ${h(user.nip)} · ${h(user.unit)}</option>`).join("")}</select></label>
+    <label class="field"><span>Tanggal</span><input name="work_date" type="date" min="${h(period.start)}" max="${h(period.end)}" required></label>
+    <label class="field"><span>Kategori / kode</span><select name="rule_id" required><option value="">Pilih kategori</option>${options.rules.map(rule=>`<option value="${rule.id}">${h(rule.label)} · ${percent(rule.rate)} (${h(rule.code)})</option>`).join("")}</select></label>
+    <label class="field"><span>Catatan (opsional)</span><textarea name="notes" maxlength="1000" placeholder="Catatan yang membantu menjelaskan input manual"></textarea></label>
+    ${manualReasonFields()}
+    <button class="button button-primary" type="submit">Simpan input manual</button>
+  </form>`);
+  const form = $("form", dialog);
+  bindManualReasonField(form);
+  form.elements.period_id.addEventListener("change",()=>{
+    const selected = options.periods.find(item=>item.id===form.elements.period_id.value);
+    if (!selected) return;
+    form.elements.work_date.min = selected.start;
+    form.elements.work_date.max = selected.end;
+    form.elements.work_date.value = "";
+  });
+  form.addEventListener("submit", async event=>{
+    event.preventDefault();
+    const button = $("button[type=submit]", form);
+    const values = formJSON(form);
+    setBusy(button,true,"Menyimpan…");
+    try {
+      const result = await api("/api/admin/deductions", {method:"POST", body:values});
+      dialog.close(); dialog.remove();
+      toast("Data tersimpan", result.message, "success");
+      const target = `#admin-deductions?period_id=${encodeURIComponent(values.period_id)}`;
+      if (location.hash === target) await renderAdminDeductions(); else location.hash = target;
+    } catch(error) { toast("Input belum tersimpan", error.message, "error"); }
+    finally { if(form.isConnected)setBusy(button,false); }
+  });
+}
+
+function openEditDeductionDialog(item) {
+  const dialog = dynamicDialog("Koreksi potongan manual", `<form class="stack-lg" id="edit-deduction-form">
+    <div class="callout callout-info"><span>i</span><div><strong>${h(item.name)}</strong><br>${h(item.nip)} · ${formatDate(item.date)} · potongan saat ini ${percent(item.original)}</div></div>
+    <label class="field"><span>Potongan baru (%)</span><input name="rate_percent" type="number" min="0" max="100" step="0.01" value="${Number(item.original)*100}" required></label>
+    ${manualReasonFields()}
+    <button class="button button-primary" type="submit">Simpan koreksi</button>
+  </form>`);
+  const form = $("form",dialog);
+  bindManualReasonField(form);
+  form.addEventListener("submit",async event=>{
+    event.preventDefault();
+    const button=$("button[type=submit]",form);
+    const values=formJSON(form);
+    const body={rate:Number(values.rate_percent)/100,reason_code:values.reason_code,reason_detail:values.reason_detail};
+    setBusy(button,true,"Menyimpan…");
+    try{
+      const result=await api(`/api/admin/deductions/${item.id}`,{method:"PATCH",body});
+      dialog.close();dialog.remove();toast("Potongan dikoreksi",result.message,"success");await renderAdminDeductions();
+    }catch(error){toast("Koreksi belum tersimpan",error.message,"error");}
+    finally{if(form.isConnected)setBusy(button,false);}
+  });
+}
+
+function openDeletePeriodDialog(period) {
+  const confirmation = `HAPUS DATA ${period.label.toUpperCase()}`;
+  const dialog = dynamicDialog("Hapus seluruh data satu bulan", `<form class="stack-lg" id="delete-period-form">
+    <div class="callout callout-danger"><span>!</span><div><strong>${h(period.label)} akan dihapus seluruhnya.</strong><br>Batch Excel, data presensi/potongan, banding, dan dokumen banding periode ini akan dihapus. Pegawai dan periode lain tidak terpengaruh.</div></div>
+    <label class="field"><span>Alasan penghapusan</span><textarea name="reason" minlength="3" maxlength="500" placeholder="Contoh: Dokumen Excel yang dipublikasikan salah" required></textarea></label>
+    <label class="field"><span>Ketik persis: ${h(confirmation)}</span><input name="confirmation" autocomplete="off" required></label>
+    <button class="button button-danger" type="submit">Hapus data ${h(period.label)}</button>
+  </form>`);
+  const form=$("form",dialog);
+  form.addEventListener("submit",async event=>{
+    event.preventDefault();
+    const button=$("button[type=submit]",form);
+    if(form.elements.confirmation.value!==confirmation){toast("Konfirmasi belum sesuai",`Ketik persis: ${confirmation}`,"error");return;}
+    setBusy(button,true,"Menghapus…");
+    try{
+      const result=await api(`/api/admin/periods/${period.id}/deductions`,{method:"DELETE",body:formJSON(form)});
+      dialog.close();dialog.remove();toast("Data periode dihapus",result.storage_warning||result.message,result.storage_warning?"error":"success");navigate("admin-imports");
+    }catch(error){toast("Data belum dihapus",error.message,"error");}
+    finally{if(form.isConnected)setBusy(button,false);}
+  });
+}
+
+function manualReasonFields(){return `<label class="field"><span>Alasan koreksi</span><select name="reason_code" required><option value="input_error">Kesalahan input</option><option value="system_error">Kesalahan sistem</option><option value="other">Lainnya</option></select></label><label class="field" data-other-reason hidden><span>Jelaskan alasan lainnya</span><textarea name="reason_detail" minlength="3" maxlength="500" placeholder="Tuliskan alasan secara spesifik"></textarea></label>`;}
+function bindManualReasonField(form){const select=form.elements.reason_code;const row=$("[data-other-reason]",form);const update=()=>{const other=select.value==="other";row.hidden=!other;form.elements.reason_detail.required=other;if(!other)form.elements.reason_detail.value="";};select.addEventListener("change",update);update();}
+
+async function renderTreasuryRecap(context = activeRouteContext("treasury-recap")) {
+  const data = await routeAPI("/api/treasury/recap", context);
+  if (!data.current_period) {
+    page.innerHTML = `${pageIntro("Rekap potongan efektif", "Rekap akan tersedia setelah administrator mempublikasikan data bulanan.")} ${emptyState("□", "Belum ada periode berjalan", "Tidak ada data yang dapat diekspor saat ini.")}`;
+    return;
+  }
+  const exportButton = `<button class="button button-primary" data-export-treasury>⇩ Ekspor Excel</button>${periodPill(data.current_period.label)}`;
+  page.innerHTML = `${pageIntro("Rekap potongan efektif", "Data bulan berjalan setelah seluruh keputusan banding diterapkan.", exportButton)}
+    <section class="grid kpi-grid">${kpi("Jumlah pegawai",numberID(data.total),"Pegawai aktif","◉","kpi-green")}${kpi("Terkena potongan",numberID(data.with_deduction),"Potongan efektif di atas 0%","%",data.with_deduction?"kpi-danger":"kpi-green")}${kpi("Tanpa potongan",numberID(data.total-data.with_deduction),"Potongan efektif 0%","✓","kpi-green")}${kpi("Akumulasi efektif",percent(data.total_effective),"Total seluruh pegawai","▤","kpi-gold")}</section>
+    <section class="panel section-top"><div class="panel-header"><div><h3>Rekap ${h(data.current_period.label)}</h3><p>Nama, NIP, unit, dan potongan efektif</p></div></div>${treasuryRecapTable(data.items)}</section>`;
+  $("[data-export-treasury]").addEventListener("click",event=>downloadAuthenticatedFile("/api/treasury/recap.xlsx",`Rekap_Potongan_Efektif_${data.current_period.label.replaceAll(" ","_")}.xlsx`,event.currentTarget));
+}
+
 async function renderAdminParameters(context = activeRouteContext("admin-parameters")) {
   const [parameters,rules,reasons]=await Promise.all([routeAPI("/api/admin/parameters",context),routeAPI("/api/admin/rules",context),routeAPI("/api/admin/reasons",context)]);
   page.innerHTML=`${pageIntro("Parameter sistem","Perubahan hanya dapat dilakukan administrator dan dicatat pada audit trail.")}
@@ -770,9 +916,10 @@ function openReasonDialog(reason){const dialog=dynamicDialog(`${reason?"Ubah":"T
 
 async function renderProfile(context = activeRouteContext("profile")){
   ensureCurrentRoute(context);
-  if(state.user.is_admin){
-    page.innerHTML=`${pageIntro("Profil & keamanan","Administrator adalah akun sistem yang terpisah dari data pegawai.")}
-      <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>@${h(state.user.username)}</p><span class="status status-active">Administrator Sistem</span></section><section class="panel"><div class="panel-header"><div><h3>Keamanan akun</h3><p>Username admin tidak menggunakan NIP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Password</strong><small>Gunakan password unik dan ganti secara berkala.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
+  if(state.user.account_type === "admin"){
+    const adminLabel = state.user.admin_role === "treasury_admin" ? "Admin Perbendaharaan" : "Administrator Sistem";
+    page.innerHTML=`${pageIntro("Profil & keamanan","Akun admin terpisah dari data pegawai dan dibatasi sesuai perannya.")}
+      <div class="grid profile-grid"><section class="panel profile-hero"><div class="avatar">${h(getInitials(state.user.name))}</div><h2>${h(state.user.name)}</h2><p>@${h(state.user.username)}</p><span class="status status-active">${h(adminLabel)}</span></section><section class="panel"><div class="panel-header"><div><h3>Keamanan akun</h3><p>Username admin tidak menggunakan NIP</p></div></div><div class="panel-body"><div class="contact-card"><div><strong>Password</strong><small>Gunakan password unik dan ganti secara berkala.</small></div><button class="button button-small button-secondary" data-change-password>Ganti</button></div></div></section></div>`;
     $("[data-change-password]").addEventListener("click",()=>$("#password-dialog").showModal());
     return;
   }
@@ -906,6 +1053,28 @@ async function downloadDocument(button){
   finally{if(button.isConnected)setBusy(button,false);}
 }
 
+async function downloadAuthenticatedFile(path,filename,button){
+  const tabToken=state.tabToken||readTabToken();
+  const headers={Accept:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"};
+  if(tabToken)headers["X-PANTAS-Tab-Token"]=tabToken;
+  setBusy(button,true,"Mengekspor…");
+  try{
+    const response=await fetch(path,{headers,credentials:"same-origin"});
+    if(!response.ok){
+      const type=response.headers.get("content-type")||"";
+      const data=type.includes("application/json")?await response.json():null;
+      const error=new Error(data?.error?.message||`Ekspor gagal (${response.status})`);
+      error.code=data?.error?.code;
+      throw error;
+    }
+    const blob=await response.blob();
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");link.href=url;link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    toast("Excel siap","Rekap potongan efektif berhasil diunduh.","success");
+  }catch(error){toast("Ekspor belum berhasil",error.message,"error");}
+  finally{if(button.isConnected)setBusy(button,false);}
+}
+
 function drawHistoryChart(points){
   const canvas=$("#history-chart");if(!canvas)return;const rect=canvas.getBoundingClientRect();const dpr=window.devicePixelRatio||1;canvas.width=Math.max(300,rect.width*dpr);canvas.height=265*dpr;const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);const width=rect.width,height=265,pad={l:44,r:18,t:18,b:42};ctx.clearRect(0,0,width,height);if(!points.length){ctx.fillStyle="#708399";ctx.font="12px system-ui";ctx.textAlign="center";ctx.fillText("Belum ada riwayat",width/2,height/2);return;}const maxRate=Math.max(.01,...points.map(p=>Math.max(p.original,p.effective)));const niceMax=Math.ceil(maxRate*100/2)*2/100;ctx.strokeStyle="#e5ebf0";ctx.lineWidth=1;ctx.fillStyle="#708399";ctx.font="10px system-ui";ctx.textAlign="right";for(let i=0;i<=4;i++){const y=pad.t+(height-pad.t-pad.b)*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(width-pad.r,y);ctx.stroke();ctx.fillText(percent(niceMax*(1-i/4)),pad.l-7,y+3);}const x=i=>points.length===1?(pad.l+width-pad.r)/2:pad.l+(width-pad.l-pad.r)*i/(points.length-1);const y=value=>pad.t+(height-pad.t-pad.b)*(1-value/niceMax);const series=(key,color)=>{ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.lineJoin="round";ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(x(i),y(p[key])):ctx.moveTo(x(i),y(p[key])));ctx.stroke();points.forEach((p,i)=>{ctx.fillStyle="#fff";ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x(i),y(p[key]),3.5,0,Math.PI*2);ctx.fill();ctx.stroke();});};series("original","#c97822");series("effective","#1479bf");ctx.fillStyle="#708399";ctx.textAlign="center";points.forEach((p,i)=>{if(points.length<=12||i%Math.ceil(points.length/12)===0)ctx.fillText(shortMonth(p.label),x(i),height-17);});ctx.textAlign="left";ctx.fillStyle="#c97822";ctx.fillRect(pad.l,2,10,3);ctx.fillStyle="#40556b";ctx.fillText("Awal",pad.l+15,7);ctx.fillStyle="#1479bf";ctx.fillRect(pad.l+60,2,10,3);ctx.fillStyle="#40556b";ctx.fillText("Efektif",pad.l+75,7);
 }
@@ -917,6 +1086,10 @@ function summaryRow(label,value){return `<div class="summary-row"><span>${h(Stri
 function emptyState(icon,title,text){return `<div class="empty-state"><div><div class="empty-icon">${icon}</div><h3>${h(title)}</h3><p>${h(text)}</p></div></div>`;}
 function errorState(message){return pageIntro("Halaman belum dapat dimuat","Coba beberapa saat lagi.")+`<div class="callout callout-danger"><span>!</span><div><strong>Terjadi kendala</strong><br>${h(message)}</div></div>`;}
 function deductionTable(items,limit){const shown=limit?items.slice(0,limit):items;if(!shown.length)return emptyState("✓","Tidak ada potongan","Tidak ada tanggal dengan potongan pada periode ini.");return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Tanggal</th><th>Jam masuk</th><th>Jam pulang</th><th>Kode</th><th>Potongan awal</th><th>Efektif</th><th>Status banding</th></tr></thead><tbody>${shown.map(item=>`<tr><td><strong>${formatDate(item.date)}</strong></td><td>${h(item.check_in||"—")}</td><td>${h(item.check_out||"—")}</td><td><span class="code-list">${(item.components||[]).map(c=>`<span class="code-chip">${h(c.code)}</span>`).join("")}</span></td><td class="rate">${percent(item.original)}</td><td class="rate ${item.effective===0?"rate-zero":""}">${percent(item.effective)}</td><td>${item.admin_status?status(item.admin_status):"—"}</td></tr>`).join("")}</tbody></table></div>`;}
+function leaveBreakdownTable(items){return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Jenis</th><th class="number">Hari</th><th class="number">Tarif per hari</th><th class="number">Akumulasi</th></tr></thead><tbody>${items.map(item=>`<tr><td><strong>${h(item.label)}</strong><br><small>${item.source==="status"?"Status presensi":"Jenis cuti"}</small></td><td class="number">${numberID(item.days)}</td><td class="number ${item.rate?"rate":"rate-zero"}">${item.rate?percent(item.rate):"Tidak dipotong"}</td><td class="number ${item.total?"rate":"rate-zero"}">${percent(item.total)}</td></tr>`).join("")}</tbody></table></div>`;}
+function adminDeductionTable(items){if(!items.length)return emptyState("✓","Tidak ada data potongan","Tidak ada pegawai dengan potongan pada periode atau pencarian ini.");return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Pegawai</th><th>Tanggal</th><th>Kode</th><th>Sumber</th><th class="number">Awal</th><th class="number">Efektif</th><th>Alasan koreksi</th><th></th></tr></thead><tbody>${items.map(item=>`<tr><td><strong>${h(item.name)}</strong><br><small>${h(item.nip)} · ${h(item.unit)}</small></td><td>${formatDate(item.date)}</td><td><span class="code-list">${(item.components||[]).map(component=>`<span class="code-chip">${h(component.code)}</span>`).join("")}</span></td><td>${h(({import:"Excel",manual:"Input manual",import_adjusted:"Excel dikoreksi"})[item.record_source]||item.record_source)}</td><td class="number rate">${percent(item.original)}</td><td class="number ${item.effective?"rate":"rate-zero"}">${percent(item.effective)}</td><td>${item.reason_code?`<strong>${h(manualReasonText(item.reason_code))}</strong>${item.reason_detail?`<small class="block">${h(item.reason_detail)}</small>`:""}`:"—"}</td><td><button class="button button-small button-ghost" data-edit-deduction data-item='${attributeJSON(item)}' ${item.has_appeal?"disabled title=\"Sudah memiliki banding\"":""}>Koreksi</button></td></tr>`).join("")}</tbody></table></div>`;}
+function treasuryRecapTable(items){return `<div class="table-wrap"><table class="data-table"><thead><tr><th class="number">No.</th><th>Nama</th><th>NIP</th><th>Unit</th><th class="number">Potongan efektif</th></tr></thead><tbody>${items.map(item=>`<tr><td class="number">${numberID(item.number)}</td><td><strong>${h(item.name)}</strong></td><td>${h(item.nip)}</td><td>${h(item.unit)}</td><td class="number ${item.effective?"rate":"rate-zero"}">${percent(item.effective)}</td></tr>`).join("")}</tbody></table></div>`;}
+function manualReasonText(value){return ({input_error:"Kesalahan input",system_error:"Kesalahan sistem",other:"Lainnya"})[value]||value;}
 function historyTable(points){if(!points.length)return emptyState("⌁","Belum ada data","Periode yang dipilih belum memiliki publikasi.");return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Periode</th><th>Rentang</th><th class="number">Hari potong</th><th class="number">Awal</th><th class="number">Efektif</th></tr></thead><tbody>${points.slice().reverse().map(p=>`<tr><td><strong>${h(p.label)}</strong></td><td>${formatDate(p.start)} – ${formatDate(p.end)}</td><td class="number">${p.deduction_days}</td><td class="number rate">${percent(p.original)}</td><td class="number">${percent(p.effective)}</td></tr>`).join("")}</tbody></table></div>`;}
 function peopleMonitoringTable(items){return `<section class="panel">${items.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Pegawai</th><th>NIP</th><th>Jabatan</th><th class="number">Hari kerja</th><th class="number">Hari potong</th><th class="number">Potongan</th></tr></thead><tbody>${items.map(item=>`<tr><td><strong>${h(item.name)}</strong><br><small>${h(item.unit_name)}</small></td><td>${h(item.nip)}</td><td>${h(roleLabel(item.role))}</td><td class="number">${item.work_days}</td><td class="number">${item.deduction_days}</td><td class="number rate">${percent(item.effective)}</td></tr>`).join("")}</tbody></table></div>`:emptyState("○","Unit kosong","")}</section>`;}
 function monitoringTotals(totals){if(!totals)return"";return `<section class="grid kpi-grid">${kpi("Total potongan efektif",percent(totals.effective),"Akumulasi cakupan kewenangan","%",totals.effective>0?"kpi-danger":"kpi-green")}${kpi("Rata-rata pegawai",percent(totals.average),"Termasuk pegawai tanpa potongan","◎","")}${kpi("Pegawai dipantau",numberID(totals.members),"Akun aktif dalam cakupan","◉","kpi-green")}${kpi("Hari terkena potongan",numberID(totals.deduction_days),"Akumulasi seluruh pegawai","△","kpi-gold")}</section>`;}

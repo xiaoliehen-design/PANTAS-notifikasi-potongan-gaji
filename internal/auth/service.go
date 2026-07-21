@@ -52,6 +52,7 @@ type Principal struct {
 	UnitName           string `json:"unit_name"`
 	UnitType           string `json:"unit_type"`
 	PositionRole       string `json:"position_role"`
+	AdminRole          string `json:"admin_role,omitempty"`
 	IsAdmin            bool   `json:"is_admin"`
 	MustChangePassword bool   `json:"must_change_password"`
 	Email              string `json:"email,omitempty"`
@@ -61,7 +62,15 @@ type Principal struct {
 }
 
 func (p Principal) IsSupervisor() bool {
-	return p.IsAdmin || p.PositionRole == "section_head" || p.PositionRole == "division_head" || p.PositionRole == "office_head"
+	return p.IsSystemAdmin() || p.PositionRole == "section_head" || p.PositionRole == "division_head" || p.PositionRole == "office_head"
+}
+
+func (p Principal) IsSystemAdmin() bool {
+	return p.AccountType == "admin" && p.AdminRole == "system_admin"
+}
+
+func (p Principal) IsTreasuryAdmin() bool {
+	return p.AccountType == "admin" && p.AdminRole == "treasury_admin"
 }
 
 func (p Principal) LoginIdentifier() string {
@@ -158,22 +167,23 @@ func (s *Service) Login(ctx context.Context, identifier, password, ip, userAgent
 	var emailVerifiedAt, phoneVerifiedAt *time.Time
 	err = s.pool.QueryRow(ctx, `
 		select u.id::text, 'user', u.nip, '', u.name, u.unit_id::text, un.name, un.unit_type,
-		       u.position_role, false, u.must_change_password,
+		       u.position_role, '', false, u.must_change_password,
 		       coalesce(u.email, ''), u.email_verified_at,
 		       coalesce(u.phone_e164, ''), u.phone_verified_at, u.password_hash
 		from public.users u
 		join public.units un on un.id = u.unit_id
 		where u.nip = $1 and u.is_active and u.deleted_at is null
 		union all
-		select aa.account_id::text, 'admin', '', aa.username, aa.name, '', 'Administrator Sistem', 'admin',
-		       'admin', true, aa.must_change_password, '', null::timestamptz,
+		select aa.account_id::text, 'admin', '', aa.username, aa.name, '',
+		       case aa.admin_role when 'treasury_admin' then 'Perbendaharaan' else 'Administrator Sistem' end,
+		       'admin', 'admin', aa.admin_role, aa.admin_role = 'system_admin', aa.must_change_password, '', null::timestamptz,
 		       '', null::timestamptz, aa.password_hash
 		from public.admin_accounts aa
 		where aa.username = lower($1) and aa.is_active
 		limit 1`, identifier).Scan(
 		&principal.ID, &principal.AccountType, &principal.NIP, &principal.Username,
 		&principal.Name, &principal.UnitID, &principal.UnitName,
-		&principal.UnitType, &principal.PositionRole, &principal.IsAdmin,
+		&principal.UnitType, &principal.PositionRole, &principal.AdminRole, &principal.IsAdmin,
 		&principal.MustChangePassword, &principal.Email, &emailVerifiedAt,
 		&principal.Phone, &phoneVerifiedAt, &passwordHash,
 	)
@@ -258,7 +268,7 @@ func (s *Service) AuthenticateRequest(ctx context.Context, request *http.Request
 	var emailVerifiedAt, phoneVerifiedAt *time.Time
 	err = s.pool.QueryRow(ctx, `
 		select u.id::text, 'user', u.nip, '', u.name, u.unit_id::text, un.name, un.unit_type,
-		       u.position_role, false, u.must_change_password,
+		       u.position_role, '', false, u.must_change_password,
 		       coalesce(u.email, ''), u.email_verified_at,
 		       coalesce(u.phone_e164, ''), u.phone_verified_at,
 		       s.id::text, s.csrf_hash
@@ -269,8 +279,9 @@ func (s *Service) AuthenticateRequest(ctx context.Context, request *http.Request
 		  and s.last_seen_at > now() - $2::interval
 		  and u.is_active and u.deleted_at is null
 		union all
-		select aa.account_id::text, 'admin', '', aa.username, aa.name, '', 'Administrator Sistem', 'admin',
-		       'admin', true, aa.must_change_password, '', null::timestamptz,
+		select aa.account_id::text, 'admin', '', aa.username, aa.name, '',
+		       case aa.admin_role when 'treasury_admin' then 'Perbendaharaan' else 'Administrator Sistem' end,
+		       'admin', 'admin', aa.admin_role, aa.admin_role = 'system_admin', aa.must_change_password, '', null::timestamptz,
 		       '', null::timestamptz, s.id::text, s.csrf_hash
 		from public.sessions s
 		join public.admin_accounts aa on aa.account_id = s.user_id
@@ -279,7 +290,7 @@ func (s *Service) AuthenticateRequest(ctx context.Context, request *http.Request
 		limit 1`, hash[:], s.cfg.SessionIdleTTL.String()).Scan(
 		&principal.ID, &principal.AccountType, &principal.NIP, &principal.Username,
 		&principal.Name, &principal.UnitID, &principal.UnitName,
-		&principal.UnitType, &principal.PositionRole, &principal.IsAdmin,
+		&principal.UnitType, &principal.PositionRole, &principal.AdminRole, &principal.IsAdmin,
 		&principal.MustChangePassword, &principal.Email, &emailVerifiedAt,
 		&principal.Phone, &phoneVerifiedAt, &session.ID, &session.CSRFHash,
 	)

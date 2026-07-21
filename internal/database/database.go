@@ -48,3 +48,14 @@ func BootstrapAdmin(ctx context.Context, pool *pgxpool.Pool, username, name, ini
 	}
 	return nil
 }
+
+func BootstrapTreasuryAdmin(ctx context.Context, pool *pgxpool.Pool, username, name, initialPassword string) error {
+	if username == "" {
+		return nil
+	}
+	var id string
+	if err := pool.QueryRow(ctx, "select public.pantas_bootstrap_treasury_admin($1, $2, $3)", username, name, initialPassword).Scan(&id); err != nil {
+		return fmt.Errorf("bootstrap treasury admin: %w", err)
+	}
+	return nil
+}

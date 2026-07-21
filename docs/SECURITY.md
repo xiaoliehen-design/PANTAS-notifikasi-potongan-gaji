@@ -5,7 +5,7 @@ PANTAS menangani NIP, presensi, potongan tukin, alasan banding, dan dokumen pend
 ## Kontrol yang diterapkan
 
 - Tidak ada pendaftaran publik; akun hanya dibuat admin.
-- Administrator menggunakan akun sistem terpisah dan tidak tersimpan sebagai pegawai/NIP.
+- Administrator menggunakan akun sistem terpisah dan tidak tersimpan sebagai pegawai/NIP; akses admin sistem dan perbendaharaan dibatasi oleh peran backend yang berbeda.
 - Password awal NIP hanya berlaku sampai pengguna dipaksa menggantinya.
 - Password setelah perubahan di-hash dengan bcrypt melalui `pgcrypto` cost 12.
 - Sesi memakai token acak 256-bit yang hanya disimpan sebagai hash di database.
@@ -21,7 +21,8 @@ PANTAS menangani NIP, presensi, potongan tukin, alasan banding, dan dokumen pend
 - Dokumen diperiksa dari isi aktual, bukan hanya ekstensi; tipe dibatasi PDF/JPG/PNG dan ukuran default 5 MB.
 - Bucket Storage privat; objek tidak dibagikan sebagai URL publik.
 - Header CSP, HSTS, anti-frame, no-sniff, referrer, dan permissions policy.
-- Perubahan admin, import, banding, dan mutasi penting dicatat pada audit log.
+- Perubahan admin, import, banding, koreksi manual, dan mutasi penting dicatat pada audit log. Koreksi potongan juga menyimpan snapshot sebelum/sesudah.
+- Penghapusan data satu periode hanya tersedia bagi admin sistem, memerlukan alasan dan teks konfirmasi persis, serta harus dilakukan setelah backup.
 - Penghapusan pengguna adalah soft delete agar integritas riwayat tetap terjaga.
 
 ## Risiko password awal NIP
@@ -40,7 +41,8 @@ Password awal administrator tidak menggunakan NIP. Nilainya berasal dari secret 
 - Service-role key dan database password hanya berada pada secret environment.
 - `APP_URL` HTTPS benar; `COOKIE_SECURE=true`.
 - Backup dan uji restore selesai.
-- UAT role staf, seluruh tingkat atasan, Kepala Kantor, dan admin selesai.
+- UAT role staf, seluruh tingkat atasan, Kepala Kantor, admin sistem, dan admin perbendaharaan selesai.
+- Uji bahwa admin perbendaharaan tidak dapat memanggil endpoint import, koreksi/hapus data, parameter, pengguna, struktur, atau keputusan banding.
 - Uji bahwa satu pegawai tidak dapat membaca data/dokumen pegawai lain.
 - Uji bahwa kepala seksi/bidang tidak dapat memperluas scope dengan mengganti URL.
 - Uji email dan webhook nomor HP dengan data non-produksi.
